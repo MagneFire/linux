@@ -36,6 +36,8 @@
 #include <linux/device.h>
 #include <linux/of_gpio.h>
 
+#include <linux/wakelock.h>
+
 #if defined(CONFIG_FB)
 #include <linux/notifier.h>
 #include <linux/fb.h>
@@ -149,6 +151,7 @@ unsigned char g_uc_raw_data_type = RAYDIUM_FT_UPDATE;
 unsigned int g_ui_raw_data_length = 36 * 2;    // 72 bytes
 unsigned long g_ul_addr = RAYDIUM_CHECK_I2C_CMD;
 unsigned int g_ui_length = 1;
+static struct wake_lock touch_lock;
 
 /*******************************************************************************
 *  Name: raydium_gpio_configure
@@ -4038,16 +4041,18 @@ static int raydium_read_touchdata(struct raydium_ts_data *data)
     if (data->blank == FB_BLANK_VSYNC_SUSPEND || data->blank == FB_BLANK_POWERDOWN)
     {
         //need check small area
+        wake_lock(&touch_lock);
         input_mt_slot(data->input_dev, 0);
         input_mt_report_slot_state(data->input_dev, MT_TOOL_FINGER, 1);
         input_report_abs(data->input_dev, ABS_MT_POSITION_X, 100);
         input_report_abs(data->input_dev, ABS_MT_POSITION_Y, 100);
         input_sync(data->input_dev);
-        mdelay(1);
+        msleep(300);
         input_mt_slot(data->input_dev, 0);
         input_mt_report_slot_state(data->input_dev, MT_TOOL_FINGER, 0);
         input_mt_report_pointer_emulation(data->input_dev, false);
         input_sync(data->input_dev);
+        wake_unlock(&touch_lock);
         g_uc_gesture_status = RAYDIUM_GESTURE_DISABLE;
         printk(KERN_INFO "[touch]display wake up\n");
         return 0;
@@ -4975,6 +4980,7 @@ static int raydium_ts_probe(struct i2c_client *client,
         return -ENOMEM;
     }
 
+    wake_lock_init(&touch_lock, WAKE_LOCK_SUSPEND, "touch-lock");
     mutex_init(&raydium_ts->lock);
 
     i2c_set_clientdata(client, raydium_ts);
@@ -5167,6 +5173,7 @@ pwr_deinit:
     raydium_power_init(raydium_ts, false);
 
 exit_regulator_failed:
+    wake_lock_destroy(&touch_lock);
     i2c_set_clientdata(client, NULL);
 
 parse_dt_failed:
