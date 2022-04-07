@@ -1191,8 +1191,10 @@ static int mdp3_overlay_set(struct msm_fb_data_type *mfd,
 	format = mdp3_ctrl_get_source_format(req->src.format);
 
 
-	if (mdp3_session->overlay.id != req->id)
-		pr_err("overlay was not released, continue to recover\n");
+	/*if (mdp3_session->overlay.id != req->id) {
+		pr_err("overlay was not released, continue to recover, ignoring first\n");
+		//mdp3_overlay_unset(mfd, mdp3_session->overlay.id);
+	}*/
 	/*
 	 * A change in overlay structure will always come with
 	 * MSMFB_NEW_REQUEST for MDP3
@@ -1298,11 +1300,12 @@ static int mdp3_overlay_play(struct msm_fb_data_type *mfd,
 
 	mutex_lock(&mdp3_session->lock);
 
-	if (mdp3_session->overlay.id == MSMFB_NEW_REQUEST) {
-		pr_err("overlay play without overlay set first\n");
-		mutex_unlock(&mdp3_session->lock);
-		return -EINVAL;
-	}
+	/*if (mdp3_session->overlay.id == MSMFB_NEW_REQUEST) {
+		//pr_err("overlay play without overlay set first, setting\n");
+		//mdp3_overlay_set(mfd, req); // Might need to be set.
+		//mutex_unlock(&mdp3_session->lock);
+		//return -EINVAL;
+	}*/
 
 	if (mdss_fb_is_power_on(mfd))
 		rc = mdp3_overlay_queue_buffer(mfd, req);
