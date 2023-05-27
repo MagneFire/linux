@@ -2594,8 +2594,6 @@ char *copy_mount_string(const void __user *data)
 	return data ? strndup_user(data, PAGE_SIZE) : NULL;
 }
 
-extern bool GetMMC_Ready(void);
-
 /*
  * Flags is a 32-bit value that allows up to 31 non-fs dependent flags to
  * be given to the mount() call (ie: read-only, no-dev, no-suid etc).
@@ -2680,10 +2678,10 @@ long do_mount(const char *dev_name, const char __user *dir_name,
 	else if (flags & MS_MOVE)
 		retval = do_move_mount(&path, dev_name);
 	else {
-		for(retry=60;!GetMMC_Ready() && retry>0;retry--) {
-			pr_err("CEI_TEST:%s, wait 50ms for MMC ready\n",__func__);
-			msleep(50);
-		}
+		// for(retry=60;!GetMMC_Ready() && retry>0;retry--) {
+		// 	pr_err("CEI_TEST:%s, wait 50ms for MMC ready\n",__func__);
+		// 	msleep(50);
+		// }
 		retval = do_new_mount(&path, type_page, flags, mnt_flags,
 				      dev_name, data_page);
 	}
