@@ -80,11 +80,7 @@
 };
 
 &i2c_3 {
-	status = "ok";
-};
-
-&i2c_2 {
-	status = "ok";
+	status = "disabled";
 };
 
 &blsp1_uart1 {
@@ -93,6 +89,10 @@
 	pinctrl-0 = <&uart_console_sleep>;
 };
 
-&qcom_seecom {
-	reg = <0x87a00000 0x200000>;
+&gdsc_oxili_gx {
+	clock-names = "core_root_clk";
+	clocks =<&clock_gcc clk_gfx3d_clk_src>;
+	qcom,enable-root-clk;
+	qcom,clk-dis-wait-val = <0x5>;
+	status = "okay";
 };
