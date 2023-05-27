@@ -317,7 +317,6 @@ static ssize_t ffs_ep0_write(struct file *file, const char __user *buf,
 				return ret;
 			}
 
-			set_bit(FFS_FL_CALL_CLOSED_CALLBACK, &ffs->flags);
 			return len;
 		}
 		break;
@@ -690,6 +689,7 @@ static void ffs_user_copy_worker(struct work_struct *work)
 
 	usb_ep_free_request(io_data->ep, io_data->req);
 
+	io_data->kiocb->private = NULL;
 	if (io_data->read)
 		kfree(io_data->iovec);
 	kfree(io_data->buf);
@@ -976,7 +976,7 @@ error_lock:
 error:
 	kfree(data);
 	if (ret < 0)
-		pr_err_ratelimited("Error: returning %zd value\n", ret);
+		pr_debug("Error: returning %zd value\n", ret);
 	return ret;
 }
 
@@ -1579,15 +1579,14 @@ static void ffs_data_clear(struct ffs_data *ffs)
 {
 	ENTER();
 
-	pr_debug("%s: ffs->gadget= %pK, ffs->flags= %lu\n", __func__,
+	pr_debug("%s: ffs->gadget= %p, ffs->flags= %lu\n", __func__,
 			ffs->gadget, ffs->flags);
 
-	if (test_and_clear_bit(FFS_FL_CALL_CLOSED_CALLBACK, &ffs->flags))
-		ffs_closed(ffs);
+	ffs_closed(ffs);
 
 	/* Dump ffs->gadget and ffs->flags */
 	if (ffs->gadget)
-		pr_err("%s: ffs:%pK ffs->gadget= %pK, ffs->flags= %lu\n",
+		pr_err("%s: ffs:%p ffs->gadget= %p, ffs->flags= %lu\n",
 				__func__, ffs, ffs->gadget, ffs->flags);
 	BUG_ON(ffs->gadget);
 
@@ -1773,7 +1772,11 @@ static int ffs_func_eps_enable(struct ffs_function *func)
 		struct usb_endpoint_descriptor *ds;
 		int desc_idx;
 
-		if (ffs->gadget->speed == USB_SPEED_SUPER)
+		if(!ffs->gadget){
+			pr_err("gadget is NULL, defualt set to USB_SPEED_HIGH\n");
+			desc_idx = 1;
+		}
+		else if (ffs->gadget->speed == USB_SPEED_SUPER)
 			desc_idx = 2;
 		else if (ffs->gadget->speed == USB_SPEED_HIGH)
 			desc_idx = 1;
@@ -3531,9 +3534,13 @@ static int ffs_ready(struct ffs_data *ffs)
 	ffs_obj->desc_ready = true;
 	ffs_obj->ffs_data = ffs;
 
-	if (ffs_obj->ffs_ready_callback)
+	if (ffs_obj->ffs_ready_callback) {
 		ret = ffs_obj->ffs_ready_callback(ffs);
+		if (ret)
+			goto done;
+	}
 
+	set_bit(FFS_FL_CALL_CLOSED_CALLBACK, &ffs->flags);
 done:
 	ffs_dev_unlock();
 	return ret;
@@ -3553,7 +3560,8 @@ static void ffs_closed(struct ffs_data *ffs)
 
 	ffs_obj->desc_ready = false;
 
-	if (ffs_obj->ffs_closed_callback)
+	if (test_and_clear_bit(FFS_FL_CALL_CLOSED_CALLBACK, &ffs->flags) &&
+	    ffs_obj->ffs_closed_callback)
 		ffs_obj->ffs_closed_callback(ffs);
 
 	if (ffs_obj->opts)
@@ -3565,8 +3573,6 @@ static void ffs_closed(struct ffs_data *ffs)
 	    || !atomic_read(&opts->func_inst.group.cg_item.ci_kref.refcount))
 		goto done;
 
-	unregister_gadget_item(ffs_obj->opts->
-			       func_inst.group.cg_item.ci_parent->ci_parent);
 done:
 	ffs_dev_unlock();
 }
