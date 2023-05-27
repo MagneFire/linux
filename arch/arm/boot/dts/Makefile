@@ -336,6 +336,7 @@ dtb-$(CONFIG_ARCH_OMAP4) += omap4-duovero-parlor.dtb \
 	omap4-panda.dtb \
 	omap4-panda-a4.dtb \
 	omap4-panda-es.dtb \
+	omap4-panda-es-stmems.dtb \
 	omap4-sdp.dtb \
 	omap4-sdp-es23plus.dtb \
 	omap4-var-dvk-om44.dtb \
@@ -518,7 +519,7 @@ dtb-$(CONFIG_MACH_DOVE) += dove-cm-a510.dtb \
 dtb-$(CONFIG_ARCH_MEDIATEK) += mt6589-aquaris5.dtb
 
 #used for cleaning - not building
-subdir- := msm8909w-ray
+subdir- := qcom
 endif
 
 dtbs: $(addprefix $(obj)/, $(DTB_LIST))
