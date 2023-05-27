@@ -49,12 +49,29 @@
 
 #include <linux/msm-bus.h>
 
+//ASUS_BSP+++ "[USB][NA][Spec] Add ASUS charger mode support"
+static struct delayed_work asus_chg_work;
+static struct work_struct asus_usb_work;
+static struct delayed_work asus_chg_cdp_work;
+static struct work_struct asus_usb_cdp_work;
+static int g_charger_mode = USB_INVALID_CHARGER;
+enum msm_otg_usb_boot_state {
+	MSM_OTG_USB_BOOT_INIT,
+	MSM_OTG_USB_BOOT_IRQ,//check IRQ to make sure USB is ready
+	MSM_OTG_USB_BOOT_DOWN,
+};
+static int g_usb_boot = MSM_OTG_USB_BOOT_INIT;
+//ASUS_BSP--- "[USB][NA][Spec] Add ASUS charger mode support"
+
 #define MSM_USB_BASE	(motg->regs)
 #define MSM_USB_PHY_CSR_BASE (motg->phy_csr_regs)
 
 #define DRIVER_NAME	"msm_otg"
 
-#define CHG_RECHECK_DELAY	(jiffies + msecs_to_jiffies(2000))
+//ASUS_BSP+++ "[USB][NA][Spec] Add wait_for_completeion_timeout to fix boot adb fail"
+#define GADGET_INIT_TIMEOUT	msecs_to_jiffies(20000)
+//ASUS_BSP--- "[USB][NA][Spec] Add wait_for_completeion_timeout to fix boot adb fail"
+#define CHG_RECHECK_DELAY	(jiffies + msecs_to_jiffies(3000))
 #define ULPI_IO_TIMEOUT_USEC	(10 * 1000)
 #define USB_PHY_3P3_VOL_MIN	3050000 /* uV */
 #define USB_PHY_3P3_VOL_MAX	3300000 /* uV */
@@ -93,7 +110,7 @@ module_param(lpm_disconnect_thresh , uint, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(lpm_disconnect_thresh,
 	"Delay before entering LPM on USB disconnect");
 
-static bool floated_charger_enable = true;
+static bool floated_charger_enable;
 module_param(floated_charger_enable , bool, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(floated_charger_enable,
 	"Whether to enable floated charger");
@@ -114,6 +131,11 @@ module_param(dcp_max_current, int, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(dcp_max_current, "max current drawn for DCP charger");
 
 static DECLARE_COMPLETION(pmic_vbus_init);
+//ASUS_BSP+++ "[USB][NA][Spec] Add wait_for_completeion_timeout to fix boot adb fail"
+struct completion asus_chg_detect_init;
+struct completion gadget_init;
+static bool asus_usb_gadget_ctrl = false;
+//ASUS_BSP--- "[USB][NA][Spec] Add wait_for_completeion_timeout to fix boot adb fail"
 static struct msm_otg *the_msm_otg;
 static bool debug_bus_voting_enabled;
 
@@ -122,8 +144,13 @@ static struct regulator *hsusb_1p8;
 static struct regulator *hsusb_vdd;
 static struct regulator *vbus_otg;
 static struct power_supply *psy;
-static bool usb_online;
-static bool fake_online = 0;
+
+//ASUS_BSP+++ "[USB][NA][Spec] add dynamic setting support for phy parameters"
+static int g_phy_parameter_b = 0;
+static int g_phy_parameter_c = 0;
+static int g_phy_parameter_d = 0;
+//ASUS_BSP--- "[USB][NA][Spec] add dynamic setting support for phy parameters"
+
 static int vdd_val[VDD_VAL_MAX];
 static u32 bus_freqs[USB_NUM_BUS_CLOCKS];	/* bimc, snoc, pcnoc clk */;
 static char bus_clkname[USB_NUM_BUS_CLOCKS][20] = {"bimc_clk", "snoc_clk",
@@ -157,6 +184,10 @@ msm_otg_dbg_log_event(struct usb_phy *phy, char *event, int d1, int d2)
 	motg->dbg_idx = motg->dbg_idx % DEBUG_MAX_MSG;
 	write_unlock_irqrestore(&motg->dbg_lock, flags);
 }
+
+//ASUS_BSP+++ "[USB][NA][Spec] Add ASUS charger mode support"
+extern bool getSoftconnect(void);
+//ASUS_BSP--- "[USB][NA][Spec] Add ASUS charger mode support"
 
 static int msm_hsusb_ldo_init(struct msm_otg *motg, int init)
 {
@@ -442,6 +473,9 @@ static void ulpi_init(struct msm_otg *motg)
 	struct msm_otg_platform_data *pdata = motg->pdata;
 	int aseq[10];
 	int *seq = NULL;
+//ASUS_BSP+++ "[USB][NA][Spec] add dynamic setting support for phy parameters"
+	int addr = 0, value = 0;
+//ASUS_BSP--- "[USB][NA][Spec] add dynamic setting support for phy parameters"
 
 	if (override_phy_init) {
 		pr_debug("%s(): HUSB PHY Init:%s\n", __func__,
@@ -456,14 +490,40 @@ static void ulpi_init(struct msm_otg *motg)
 		return;
 
 	while (seq[0] >= 0) {
+//ASUS_BSP+++ "[USB][NA][Spec] add dynamic setting support for phy parameters"
+		addr = seq [1];
+		value = seq[0];
+		if (seq[1] == 0x81) {
+			if (g_phy_parameter_b > 0) {
+				value = g_phy_parameter_b;
+			} else {
+				value = seq[0];
+			}
+		}
+		if (seq[1] == 0x82) {
+			if (g_phy_parameter_c > 0) {
+				value = g_phy_parameter_c;
+			} else {
+				value = seq[0];
+			}
+		}
+		if (seq[1] == 0x83) {
+			if (g_phy_parameter_d > 0) {
+				value = g_phy_parameter_d;
+			} else {
+				value = seq[0];
+			}
+		}
+
 		if (override_phy_init)
 			pr_debug("ulpi: write 0x%02x to 0x%02x\n",
-					seq[0], seq[1]);
+					value, addr);
 
-		dev_vdbg(motg->phy.dev, "ulpi: write 0x%02x to 0x%02x\n",
-				seq[0], seq[1]);
-		msm_otg_dbg_log_event(&motg->phy, "ULPI WRITE", seq[0], seq[1]);
-		ulpi_write(&motg->phy, seq[0], seq[1]);
+		dev_info(motg->phy.dev, "ulpi: write 0x%02x to 0x%02x\n",
+				value, addr);
+		msm_otg_dbg_log_event(&motg->phy, "ULPI WRITE", value, addr);
+		ulpi_write(&motg->phy, value, addr);
+//ASUS_BSP--- "[USB][NA][Spec] add dynamic setting support for phy parameters"
 		seq += 2;
 	}
 }
@@ -1689,7 +1749,7 @@ static int msm_otg_notify_chg_type(struct msm_otg *motg)
 		return -EINVAL;
 	}
 
-	pr_debug("setting usb power supply type %d\n", charger_type);
+	pr_info("setting usb power supply type %d\n", charger_type);
 	msm_otg_dbg_log_event(&motg->phy, "SET USB PWR SUPPLY TYPE",
 			motg->chg_type, charger_type);
 	power_supply_set_supply_type(psy, charger_type);
@@ -2375,18 +2435,142 @@ static const char *chg_to_string(enum usb_chg_type chg_type)
 #define MSM_CHG_DCD_POLL_TIME		(50 * HZ/1000) /* 50 msec */
 #define MSM_CHG_PRIMARY_DET_TIME	(50 * HZ/1000) /* TVDPSRC_ON */
 #define MSM_CHG_SECONDARY_DET_TIME	(50 * HZ/1000) /* TVDMSRC_ON */
+
+//ASUS_BSP+++ "[USB][NA][Spec] Add ASUS charger mode support"
+static void asus_usb_detect_work(struct work_struct *w)
+{
+	struct msm_otg *motg = the_msm_otg;
+	struct usb_otg *otg = motg->phy.otg;
+	cancel_delayed_work_sync(&asus_chg_work);
+	g_charger_mode = USB_SDP_CHARGER;
+	if (!getSoftconnect() || asus_usb_gadget_ctrl) {
+		g_usb_boot = MSM_OTG_USB_BOOT_INIT;
+		usb_gadget_disconnect(otg->gadget);
+		//ASUS_BSP+++ "[USB][NA][Spec] Add wait_for_completeion_timeout to fix boot adb fail"
+		if(!asus_chg_detect_init.done) {
+			complete(&asus_chg_detect_init);
+			pr_info("[USB] %s: asus_chg_detect_init: complete\n", __func__);
+			msm_otg_dbg_log_event(&motg->phy, "CHARGER DET WAIT COMPLETE", getSoftconnect(), asus_chg_detect_init.done);
+		}
+		asus_usb_gadget_ctrl = false;
+		//ASUS_BSP--- "[USB][NA][Spec] Add wait_for_completeion_timeout to fix boot adb fail"
+		msm_otg_notify_charger(motg, 500);
+	}
+	printk("[USB] set_chg_mode: USB\n");
+	// ASUSEvtlog("[USB] set_chg_mode: USB\n");
+}
+static void asus_chg_detect_work(struct work_struct *w)
+{
+	struct msm_otg *motg = the_msm_otg;
+	struct usb_otg *otg = motg->phy.otg;
+	if(g_usb_boot == MSM_OTG_USB_BOOT_DOWN){
+		if(motg->vbus_state){
+			motg->chg_type = USB_INVALID_CHARGER;
+			msm_otg_notify_charger(motg, 100);
+			g_charger_mode = USB_INVALID_CHARGER;
+			printk("[USB] set_chg_mode: UNKNOWN\n");
+			// ASUSEvtlog("[USB] set_chg_mode: UNKNOWN\n");
+			if (!getSoftconnect() || asus_usb_gadget_ctrl) {
+				g_usb_boot = MSM_OTG_USB_BOOT_INIT;
+				usb_gadget_disconnect(otg->gadget);
+				//ASUS_BSP+++ "[USB][NA][Spec] Add wait_for_completeion_timeout to fix boot adb fail"
+				if(!asus_chg_detect_init.done) {
+					complete(&asus_chg_detect_init);
+					pr_info("[USB] %s: asus_chg_detect_init: complete\n", __func__);
+					msm_otg_dbg_log_event(&motg->phy, "CHARGER DET WAIT COMPLETE", getSoftconnect(), asus_chg_detect_init.done);
+				}
+				asus_usb_gadget_ctrl = false;
+				//ASUS_BSP--- "[USB][NA][Spec] Add wait_for_completeion_timeout to fix boot adb fail"
+			}
+
+			msm_otg_start_peripheral(otg, 0);
+		}
+		else{
+			printk("[USB] asus_chg_detect_work: BSV is not set,need re-check.(%d,%d)\n",motg->vbus_state,test_bit(B_SESS_VLD, &motg->inputs));
+			queue_work(motg->otg_wq, &motg->sm_work);
+		}
+	}else{
+		printk("[USB] asus_chg_detect_work: g_usb_boot is %d , add more 2 sec softconnect=%d\n",g_usb_boot ,getSoftconnect());
+		if(g_usb_boot == MSM_OTG_USB_BOOT_IRQ){
+			g_usb_boot = MSM_OTG_USB_BOOT_DOWN;
+		}
+		schedule_delayed_work(&asus_chg_work, (2000 * HZ/1000));
+	}
+}
+
+static void asus_usb_detect_cdp_work(struct work_struct *w)
+{
+	struct msm_otg *motg = the_msm_otg;
+	struct usb_otg *otg = motg->phy.otg;
+	cancel_delayed_work_sync(&asus_chg_cdp_work);
+	pr_debug("[USB] %s: CDP detect finished\n", __func__);
+	if (!getSoftconnect() || asus_usb_gadget_ctrl) {
+		usb_gadget_disconnect(otg->gadget);
+		//ASUS_BSP+++ "[USB][NA][Spec] Add wait_for_completeion_timeout to fix boot adb fail"
+		if(!asus_chg_detect_init.done) {
+			complete(&asus_chg_detect_init);
+			pr_info("[USB] %s: asus_chg_detect_init: complete\n", __func__);
+			msm_otg_dbg_log_event(&motg->phy, "CHARGER DET WAIT COMPLETE", getSoftconnect(), asus_chg_detect_init.done);
+		}
+		asus_usb_gadget_ctrl = false;
+		//ASUS_BSP--- "[USB][NA][Spec] Add wait_for_completeion_timeout to fix boot adb fail"
+	}
+}
+
+static void asus_chg_detect_cdp_work(struct work_struct *w)
+{
+	struct msm_otg *motg = the_msm_otg;
+	struct usb_otg *otg = motg->phy.otg;
+	pr_debug("[USB] %s: CDP detect finished\n", __func__);
+	if (!getSoftconnect() || asus_usb_gadget_ctrl) {
+		usb_gadget_disconnect(otg->gadget);
+		//ASUS_BSP+++ "[USB][NA][Spec] Add wait_for_completeion_timeout to fix boot adb fail"
+		if(!asus_chg_detect_init.done) {
+			complete(&asus_chg_detect_init);
+			pr_info("[USB] %s: asus_chg_detect_init: complete\n", __func__);
+			msm_otg_dbg_log_event(&motg->phy, "CHARGER DET WAIT COMPLETE", getSoftconnect(), asus_chg_detect_init.done);
+		}
+		asus_usb_gadget_ctrl = false;
+		//ASUS_BSP--- "[USB][NA][Spec] Add wait_for_completeion_timeout to fix boot adb fail"
+	}
+}
+//ASUS_BSP--- "[USB][NA][Spec] Add ASUS charger mode support"
+
 static void msm_chg_detect_work(struct work_struct *w)
 {
 	struct msm_otg *motg = container_of(w, struct msm_otg, chg_work.work);
 	struct usb_phy *phy = &motg->phy;
+	struct usb_otg *otg = motg->phy.otg;
 	bool is_dcd = false, tmout, vout;
 	static bool dcd;
 	u32 line_state, dm_vlgc;
 	unsigned long delay;
+	int ret;
 
 	dev_dbg(phy->dev, "chg detection work\n");
 	msm_otg_dbg_log_event(phy, "CHG DETECTION WORK",
 			motg->chg_state, get_pm_runtime_counter(phy->dev));
+
+	//ASUS_BSP+++ "[USB][NA][Spec] Add wait_for_completeion_timeout to fix boot adb fail"
+	if (!gadget_init.done) {
+		pr_info("[USB] %s: gadget_init: wait_for_completion_timeout\n", __func__);
+		ret = wait_for_completion_timeout(&gadget_init,GADGET_INIT_TIMEOUT);
+		if (!ret) {
+			pr_err("[USB] %s: timeout waiting for gadget init\n",__func__);
+			msm_otg_dbg_log_event(&motg->phy,
+						"GADGET INIT WAIT TMOUT",
+						motg->inputs, motg->phy.state);
+		}
+
+		gadget_init.done=1;
+
+		if (!test_bit(B_SESS_VLD, &motg->inputs)) {
+			pr_err("[USB] %s: chg detection work stop (usb unplug)\n", __func__);
+			queue_work(motg->otg_wq, &motg->sm_work);
+			return;
+		}
+	}
+	//ASUS_BSP--- "[USB][NA][Spec] Add wait_for_completeion_timeout to fix boot adb fail"
 
 	switch (motg->chg_state) {
 	case USB_CHG_STATE_UNDEFINED:
@@ -2438,7 +2622,6 @@ static void msm_chg_detect_work(struct work_struct *w)
 
 			motg->chg_state = USB_CHG_STATE_DETECTED;
 			delay = 0;
-			goto state_detected;
 		}
 		break;
 	case USB_CHG_STATE_PRIMARY_DONE:
@@ -2452,7 +2635,6 @@ static void msm_chg_detect_work(struct work_struct *w)
 	case USB_CHG_STATE_SECONDARY_DONE:
 		motg->chg_state = USB_CHG_STATE_DETECTED;
 	case USB_CHG_STATE_DETECTED:
-		state_detected:
 		/*
 		 * Notify the charger type to power supply
 		 * owner as soon as we determine the charger.
@@ -2462,6 +2644,46 @@ static void msm_chg_detect_work(struct work_struct *w)
 				init_completion(&motg->ext_chg_wait);
 				motg->ext_chg_active = DEFAULT;
 		}
+
+		//ASUS_BSP+++ "[USB][NA][Spec] Add ASUS charger mode support"
+		if(motg->chg_type != USB_SDP_CHARGER){
+			if(motg->chg_type == USB_CDP_CHARGER) {
+				if (!getSoftconnect()) {
+					//ASUS_BSP+++ "[USB][NA][Spec] Add wait_for_completeion_timeout to fix boot adb fail"
+					asus_usb_gadget_ctrl = true;
+					asus_chg_detect_init.done = 0;
+					pr_info("[USB] %s: asus_chg_detect_init: set done to %d\n", __func__, asus_chg_detect_init.done);
+					//ASUS_BSP--- "[USB][NA][Spec] Add wait_for_completeion_timeout to fix boot adb fail"
+					usb_gadget_connect(otg->gadget);
+					schedule_delayed_work(&asus_chg_cdp_work, (2000 * HZ/1000));
+				}
+				printk("[USB] set_chg_mode: ASUS CDP\n");
+				// ASUSEvtlog("[USB] set_chg_mode: ASUS CDP\n");
+			} else {
+				printk("[USB] set_chg_mode: ASUS DCP\n");
+				// ASUSEvtlog("[USB] set_chg_mode: ASUS DCP\n");
+			}
+		}
+		else{
+			if(g_usb_boot == MSM_OTG_USB_BOOT_IRQ){
+				g_usb_boot = MSM_OTG_USB_BOOT_DOWN;
+			}
+
+			if (!getSoftconnect()) {
+				//ASUS_BSP+++ "[USB][NA][Spec] Add wait_for_completeion_timeout to fix boot adb fail"
+				asus_usb_gadget_ctrl = true;
+				asus_chg_detect_init.done = 0;
+				pr_info("[USB] %s: asus_chg_detect_init: set done to %d\n", __func__, asus_chg_detect_init.done);
+				//ASUS_BSP--- "[USB][NA][Spec] Add wait_for_completeion_timeout to fix boot adb fail"
+				usb_gadget_connect(otg->gadget);
+			}
+
+			//wait 2 sec to check non-asus charger
+			printk("[USB] asus_chg_work: wait 2 sec to check non-asus charger\n");
+			schedule_delayed_work(&asus_chg_work, (2000 * HZ/1000));
+		}
+		//ASUS_BSP--- "[USB][NA][Spec] Add ASUS charger mode support"
+
 		msm_otg_notify_chg_type(motg);
 		msm_chg_block_off(motg);
 
@@ -2487,7 +2709,9 @@ static void msm_chg_detect_work(struct work_struct *w)
 	queue_delayed_work(motg->otg_wq, &motg->chg_work, delay);
 }
 
-#define VBUS_INIT_TIMEOUT	msecs_to_jiffies(5000)
+//ASUS_BSP+++ "[USB][NA][Spec] Modify VBUS_INIT_TIMEOUT to fix boot adb fail"
+#define VBUS_INIT_TIMEOUT	msecs_to_jiffies(6500)
+//ASUS_BSP--- "[USB][NA][Spec] Modify VBUS_INIT_TIMEOUT to fix boot adb fail"
 
 /*
  * We support OTG, Peripheral only and Host only configurations. In case
@@ -2580,9 +2804,18 @@ static void msm_otg_init_sm(struct msm_otg *motg)
 				msm_otg_dbg_log_event(&motg->phy,
 						"PMIC VBUS WAIT TMOUT",
 						motg->inputs, motg->phy.state);
+				pr_info("[USB] %s: timeout waiting for PMIC VBUS\n", __func__);
 				clear_bit(B_SESS_VLD, &motg->inputs);
 				pmic_vbus_init.done = 1;
 			}
+
+			//ASUS_BSP+++ "[USB][NA][Spec] Add wait_for_completeion_timeout to fix boot adb fail"
+			if(!asus_chg_detect_init.done){
+				complete(&asus_chg_detect_init);
+				pr_info("[USB] %s: asus_chg_detect_init: complete\n", __func__);
+				msm_otg_dbg_log_event(&motg->phy, "CHARGER DET WAIT COMPLETE", getSoftconnect(), asus_chg_detect_init.done);
+			}
+			//ASUS_BSP--- "[USB][NA][Spec] Add wait_for_completeion_timeout to fix boot adb fail"
 		} else if (pdata->otg_control == OTG_USER_CONTROL) {
 			set_bit(ID, &motg->inputs);
 			set_bit(B_SESS_VLD, &motg->inputs);
@@ -2694,6 +2927,10 @@ static void msm_otg_sm_work(struct work_struct *w)
 
 			msm_otg_start_host(otg, 1);
 			otg->phy->state = OTG_STATE_A_HOST;
+			//ASUS_BSP+++ "[USB][NA][Spec] Add ASUS charger mode support"
+			cancel_delayed_work_sync(&asus_chg_work);
+			cancel_delayed_work_sync(&asus_chg_cdp_work);
+			//ASUS_BSP--- "[USB][NA][Spec] Add ASUS charger mode support"
 		} else if (test_bit(B_SESS_VLD, &motg->inputs)) {
 			pr_debug("b_sess_vld\n");
 			msm_otg_dbg_log_event(&motg->phy, "B_SESS_VLD",
@@ -2730,7 +2967,6 @@ static void msm_otg_sm_work(struct work_struct *w)
 				case USB_SDP_CHARGER:
 					pm_runtime_get_sync(otg->phy->dev);
 					msm_otg_start_peripheral(otg, 1);
-					msm_otg_notify_charger(motg, IUNIT); 
 					otg->phy->state =
 						OTG_STATE_B_PERIPHERAL;
 					mod_timer(&motg->chg_check_timer,
@@ -2762,6 +2998,25 @@ static void msm_otg_sm_work(struct work_struct *w)
 			}
 
 			dcp = (motg->chg_type == USB_DCP_CHARGER);
+			//ASUS_BSP+++ "[USB][NA][Spec] Add ASUS charger mode support"
+			cancel_delayed_work_sync(&asus_chg_work);
+			cancel_delayed_work_sync(&asus_chg_cdp_work);
+			g_charger_mode = USB_INVALID_CHARGER;
+			printk("[USB] set_chg_mode: None\n");
+			// ASUSEvtlog("[USB] set_chg_mode: None\n");
+			if (!getSoftconnect() || asus_usb_gadget_ctrl) {
+				g_usb_boot = MSM_OTG_USB_BOOT_INIT;
+				usb_gadget_disconnect(otg->gadget);
+				//ASUS_BSP+++ "[USB][NA][Spec] Add wait_for_completeion_timeout to fix boot adb fail"
+				if(!asus_chg_detect_init.done) {
+					complete(&asus_chg_detect_init);
+					pr_info("[USB] %s: asus_chg_detect_init: complete\n", __func__);
+					msm_otg_dbg_log_event(&motg->phy, "CHARGER DET WAIT COMPLETE", getSoftconnect(), asus_chg_detect_init.done);
+				}
+				asus_usb_gadget_ctrl = false;
+				//ASUS_BSP--- "[USB][NA][Spec] Add wait_for_completeion_timeout to fix boot adb fail"
+			}
+			//ASUS_BSP--- "[USB][NA][Spec] Add ASUS charger mode support"
 			motg->chg_state = USB_CHG_STATE_UNDEFINED;
 			motg->chg_type = USB_INVALID_CHARGER;
 			msm_otg_notify_charger(motg, 0);
@@ -2787,6 +3042,9 @@ static void msm_otg_sm_work(struct work_struct *w)
 			msm_otg_start_peripheral(otg, 0);
 			motg->chg_type = USB_DCP_CHARGER;
 			clear_bit(B_FALSE_SDP, &motg->inputs);
+			msm_otg_notify_charger(motg, IDEV_CHG_MAX);
+			printk("[USB] set_chg_mode: ASUS DCP\n");
+			// ASUSEvtlog("[USB] set_chg_mode: ASUS DCP\n");
 			otg->phy->state = OTG_STATE_B_IDLE;
 			msm_otg_dbg_log_event(&motg->phy, "B_FALSE_SDP PUT",
 				get_pm_runtime_counter(dev), motg->inputs);
@@ -2858,7 +3116,7 @@ static irqreturn_t msm_otg_irq(int irq, void *data)
 {
 	struct msm_otg *motg = data;
 	struct usb_otg *otg = motg->phy.otg;
-	u32 otgsc = 0;
+	u32 otgsc = 0, usbsts;
 	bool work = 0;
 
 	if (atomic_read(&motg->in_lpm)) {
@@ -2876,6 +3134,19 @@ static irqreturn_t msm_otg_irq(int irq, void *data)
 		return IRQ_HANDLED;
 	}
 
+	usbsts = readl(USB_USBSTS);
+	//ASUS_BSP+++ "[USB][NA][Spec] Add ASUS charger mode support"
+	if(usbsts & (1<<6)){//check usb reset
+		if((g_charger_mode!=USB_SDP_CHARGER) && (motg->chg_type != USB_CDP_CHARGER)){
+			schedule_work(&asus_usb_work);
+		} else if (motg->chg_type == USB_CDP_CHARGER) {
+			schedule_work(&asus_usb_cdp_work);
+		}
+	}
+	if(g_usb_boot == MSM_OTG_USB_BOOT_INIT){
+		g_usb_boot = MSM_OTG_USB_BOOT_IRQ;
+	}
+	//ASUS_BSP--- "[USB][NA][Spec] Add ASUS charger mode support"
 	otgsc = readl_relaxed(USB_OTGSC);
 	if (!(otgsc & (OTGSC_IDIS | OTGSC_BSVIS)))
 		return IRQ_NONE;
@@ -2927,13 +3198,17 @@ static void msm_otg_set_vbus_state(int online)
 		return;
 
 	if (online) {
-		pr_debug("PMIC: BSV set\n");
+		pr_debug("[USB] PMIC: BSV set\n");
+		printk("[USB] plugin\n");
+		// ASUSEvtlog("[USB] plugin\n");
 		msm_otg_dbg_log_event(&motg->phy, "PMIC: BSV SET",
 				init, motg->inputs);
 		if (test_and_set_bit(B_SESS_VLD, &motg->inputs) && init)
 			return;
 	} else {
-		pr_debug("PMIC: BSV clear\n");
+		pr_debug("[USB] PMIC: BSV clear\n");
+		printk("[USB] unplug\n");
+		// ASUSEvtlog("[USB] unplug\n");
 		msm_otg_dbg_log_event(&motg->phy, "PMIC: BSV CLEAR",
 				init, motg->inputs);
 		if (!test_and_clear_bit(B_SESS_VLD, &motg->inputs) && init)
@@ -2964,7 +3239,9 @@ static void msm_otg_set_vbus_state(int online)
 		pr_debug("PMIC: BSV init complete\n");
 		msm_otg_dbg_log_event(&motg->phy, "PMIC: BSV INIT COMPLETE",
 				init, motg->inputs);
-		return;
+//ASUS_BSP+++ "[USB][NA][Spec] Avoid to ignore first VBUS event"
+		//return;
+//ASUS_BSP--- "[USB][NA][Spec] Avoid to ignore first VBUS event"
 	}
 
 out:
@@ -3008,7 +3285,7 @@ static void msm_id_status_w(struct work_struct *w)
 		if (gpio_is_valid(motg->pdata->switch_sel_gpio))
 			gpio_direction_input(motg->pdata->switch_sel_gpio);
 		if (!test_and_set_bit(ID, &motg->inputs)) {
-			pr_debug("ID set\n");
+			pr_info("[USB] ID set\n");
 			msm_otg_dbg_log_event(&motg->phy, "ID SET",
 					motg->inputs, motg->phy.state);
 			work = 1;
@@ -3017,7 +3294,7 @@ static void msm_id_status_w(struct work_struct *w)
 		if (gpio_is_valid(motg->pdata->switch_sel_gpio))
 			gpio_direction_output(motg->pdata->switch_sel_gpio, 1);
 		if (test_and_clear_bit(ID, &motg->inputs)) {
-			pr_debug("ID clear\n");
+			pr_info("[USB] ID clear\n");
 			msm_otg_dbg_log_event(&motg->phy, "ID CLEAR",
 					motg->inputs, motg->phy.state);
 			work = 1;
@@ -3379,10 +3656,7 @@ static int otg_power_get_property_usb(struct power_supply *psy,
 		break;
 	/* Reflect USB enumeration */
 	case POWER_SUPPLY_PROP_ONLINE:
-		val->intval = fake_online;
-		break;
-	case POWER_SUPPLY_PROP_TECHNOLOGY:
-		val->intval = fake_online;
+		val->intval = motg->online;
 		break;
 	case POWER_SUPPLY_PROP_TYPE:
 		val->intval = psy->type;
@@ -3408,8 +3682,6 @@ static int otg_power_set_property_usb(struct power_supply *psy,
 {
 	struct msm_otg *motg = container_of(psy, struct msm_otg, usb_psy);
 	struct msm_otg_platform_data *pdata = motg->pdata;
-	union power_supply_propval data;
-	struct power_supply *charger_psy;
 
 	msm_otg_dbg_log_event(&motg->phy, "SET PWR PROPERTY", psp, psy->type);
 	switch (psp) {
@@ -3427,24 +3699,7 @@ static int otg_power_set_property_usb(struct power_supply *psy,
 		break;
 	/* The ONLINE property reflects if usb has enumerated */
 	case POWER_SUPPLY_PROP_ONLINE:
-		pr_info("[phy-msm-usb] set_property: online = %d \n", val->intval);
 		motg->online = val->intval;
-		
-		if (usb_online ^ val->intval) {
-			usb_online = val->intval;
-			data.intval = val->intval;
-			//Notify charger driver to update charging status
-			charger_psy = power_supply_get_by_name("battery");
-			if (charger_psy)
-				charger_psy->set_property(charger_psy, POWER_SUPPLY_PROP_STATUS, &data);
-		}
-		break;
-	case POWER_SUPPLY_PROP_TECHNOLOGY:
-		pr_info("otg_power_SET_property_usb, set fake_online:%d  \n", val->intval);
-		fake_online = val->intval;
-		charger_psy = power_supply_get_by_name("battery");
-		if (charger_psy)
-			power_supply_changed(charger_psy);
 		break;
 	case POWER_SUPPLY_PROP_VOLTAGE_MAX:
 		motg->voltage_max = val->intval;
@@ -3517,6 +3772,7 @@ static int otg_power_set_property_usb(struct power_supply *psy,
 			motg->chg_state = USB_CHG_STATE_DETECTED;
 		}
 
+		pr_debug("[USB] set_chg_mode: %s\n", chg_to_string(motg->chg_type));
 		dev_dbg(motg->phy.dev, "%s: charger type = %s\n", __func__,
 			chg_to_string(motg->chg_type));
 		msm_otg_dbg_log_event(&motg->phy, "SET CHARGER TYPE ",
@@ -3540,7 +3796,6 @@ static int otg_power_property_is_writeable_usb(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_HEALTH:
 	case POWER_SUPPLY_PROP_PRESENT:
 	case POWER_SUPPLY_PROP_ONLINE:
-	case POWER_SUPPLY_PROP_TECHNOLOGY:	
 	case POWER_SUPPLY_PROP_VOLTAGE_MAX:
 	case POWER_SUPPLY_PROP_CURRENT_MAX:
 	case POWER_SUPPLY_PROP_DP_DM:
@@ -3562,7 +3817,6 @@ static enum power_supply_property otg_pm_power_props_usb[] = {
 	POWER_SUPPLY_PROP_HEALTH,
 	POWER_SUPPLY_PROP_PRESENT,
 	POWER_SUPPLY_PROP_ONLINE,
-	POWER_SUPPLY_PROP_TECHNOLOGY,
 	POWER_SUPPLY_PROP_VOLTAGE_MAX,
 	POWER_SUPPLY_PROP_CURRENT_MAX,
 	POWER_SUPPLY_PROP_INPUT_CURRENT_MAX,
@@ -3580,6 +3834,143 @@ const struct file_operations msm_otg_bus_fops = {
 	.llseek = seq_lseek,
 	.release = single_release,
 };
+
+//ASUS_BSP+++ "[USB][NA][Spec] add dynamic setting support for phy parameters"
+static int myxtoi(const char *name)
+{
+	int val = 0;
+
+	for (;; name++) {
+		switch (*name) {
+		case '0' ... '9':
+			val = 16*val+(*name-'0');
+			break;
+		case 'A' ... 'F':
+			val = 16*val+(*name-'A'+10);
+			break;
+		case 'a' ... 'f':
+			val = 16*val+(*name-'a'+10);
+			break;
+		default:
+			return val;
+		}
+	}
+}
+
+static int msm_otg_phy_parameter_b_show(struct seq_file *s, void *unused)
+{
+	seq_printf(s, "reg: 0x81, value: 0x%X\n", g_phy_parameter_b);
+	return 0;
+}
+
+static int msm_otg_phy_parameter_b_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, msm_otg_phy_parameter_b_show, inode->i_private);
+}
+
+static ssize_t msm_otg_phy_parameter_b_write(struct file *file, const char __user *ubuf,
+				size_t count, loff_t *ppos)
+{
+	char buf[16];
+	int status = count;
+
+	memset(buf, 0x00, sizeof(buf));
+
+	if (copy_from_user(&buf, ubuf, min_t(size_t, sizeof(buf) - 1, count))) {
+		status = -EFAULT;
+		goto out;
+	}
+
+	g_phy_parameter_b = myxtoi(buf);
+
+out:
+	return status;
+}
+
+const struct file_operations msm_otg_phy_parameter_b_fops = {
+	.open = msm_otg_phy_parameter_b_open,
+	.read = seq_read,
+	.write = msm_otg_phy_parameter_b_write,
+	.llseek = seq_lseek,
+	.release = single_release,
+};
+
+static int msm_otg_phy_parameter_c_show(struct seq_file *s, void *unused)
+{
+	seq_printf(s, "reg: 0x82, value: 0x%X\n", g_phy_parameter_c);
+	return 0;
+}
+
+static int msm_otg_phy_parameter_c_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, msm_otg_phy_parameter_c_show, inode->i_private);
+}
+
+static ssize_t msm_otg_phy_parameter_c_write(struct file *file, const char __user *ubuf,
+				size_t count, loff_t *ppos)
+{
+	char buf[16];
+	int status = count;
+
+	memset(buf, 0x00, sizeof(buf));
+
+	if (copy_from_user(&buf, ubuf, min_t(size_t, sizeof(buf) - 1, count))) {
+		status = -EFAULT;
+		goto out;
+	}
+
+	g_phy_parameter_c = myxtoi(buf);
+
+out:
+	return status;
+}
+
+const struct file_operations msm_otg_phy_parameter_c_fops = {
+	.open = msm_otg_phy_parameter_c_open,
+	.read = seq_read,
+	.write = msm_otg_phy_parameter_c_write,
+	.llseek = seq_lseek,
+	.release = single_release,
+};
+
+static int msm_otg_phy_parameter_d_show(struct seq_file *s, void *unused)
+{
+	seq_printf(s, "reg: 0x83, value: 0x%X\n", g_phy_parameter_d);
+	return 0;
+}
+
+static int msm_otg_phy_parameter_d_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, msm_otg_phy_parameter_d_show, inode->i_private);
+}
+
+static ssize_t msm_otg_phy_parameter_d_write(struct file *file, const char __user *ubuf,
+				size_t count, loff_t *ppos)
+{
+	char buf[16];
+	int status = count;
+
+	memset(buf, 0x00, sizeof(buf));
+
+	if (copy_from_user(&buf, ubuf, min_t(size_t, sizeof(buf) - 1, count))) {
+		status = -EFAULT;
+		goto out;
+	}
+
+	g_phy_parameter_d = myxtoi(buf);
+
+out:
+	return status;
+}
+
+const struct file_operations msm_otg_phy_parameter_d_fops = {
+	.open = msm_otg_phy_parameter_d_open,
+	.read = seq_read,
+	.write = msm_otg_phy_parameter_d_write,
+	.llseek = seq_lseek,
+	.release = single_release,
+};
+//ASUS_BSP--- "[USB][NA][Spec] add dynamic setting support for phy parameters"
 
 static struct dentry *msm_otg_dbg_root;
 
@@ -3640,6 +4031,35 @@ static int msm_otg_debugfs_init(struct msm_otg *motg)
 		debugfs_remove_recursive(msm_otg_dbg_root);
 		return -ENODEV;
 	}
+
+//ASUS_BSP+++ "[USB][NA][Spec] add dynamic setting support for phy parameters"
+	msm_otg_dentry = debugfs_create_file("phy_parameter_b", S_IRUGO |
+		S_IWUSR, msm_otg_dbg_root, motg,
+		&msm_otg_phy_parameter_b_fops);
+
+	if (!msm_otg_dentry) {
+		debugfs_remove_recursive(msm_otg_dbg_root);
+		return -ENODEV;
+	}
+
+	msm_otg_dentry = debugfs_create_file("phy_parameter_c", S_IRUGO |
+		S_IWUSR, msm_otg_dbg_root, motg,
+		&msm_otg_phy_parameter_c_fops);
+
+	if (!msm_otg_dentry) {
+		debugfs_remove_recursive(msm_otg_dbg_root);
+		return -ENODEV;
+	}
+
+	msm_otg_dentry = debugfs_create_file("phy_parameter_d", S_IRUGO |
+		S_IWUSR, msm_otg_dbg_root, motg,
+		&msm_otg_phy_parameter_d_fops);
+
+	if (!msm_otg_dentry) {
+		debugfs_remove_recursive(msm_otg_dbg_root);
+		return -ENODEV;
+	}
+//ASUS_BSP--- "[USB][NA][Spec] add dynamic setting support for phy parameters"
 	return 0;
 }
 
@@ -4141,6 +4561,9 @@ struct msm_otg_platform_data *msm_otg_dt_to_pdata(struct platform_device *pdev)
 
 	pdata->enable_sdp_typec_current_limit = of_property_read_bool(node,
 					"qcom,enable-sdp-typec-current-limit");
+
+	pdata->disable_reset_on_disconnect = 0;
+
 	return pdata;
 }
 
@@ -4344,7 +4767,7 @@ static int msm_otg_probe(struct platform_device *pdev)
 		ret = -ENOMEM;
 		goto otg_remove_devices;
 	}
-	usb_online = 0;
+
 	the_msm_otg = motg;
 	motg->pdata = pdata;
 	phy = &motg->phy;
@@ -4389,7 +4812,7 @@ static int msm_otg_probe(struct platform_device *pdev)
 		ret = -ENOMEM;
 		goto devote_bus_bw;
 	}
-	dev_info(&pdev->dev, "OTG regs = %pK\n", motg->regs);
+	dev_info(&pdev->dev, "OTG regs = %p\n", motg->regs);
 
 	if (pdata->enable_sec_phy) {
 		res = platform_get_resource_byname(pdev,
@@ -4548,11 +4971,22 @@ static int msm_otg_probe(struct platform_device *pdev)
 	/* Ensure that above STOREs are completed before enabling interrupts */
 	mb();
 
+	//ASUS_BSP+++ "[USB][NA][Spec] Add wait_for_completeion_timeout to fix boot adb fail"
+	init_completion(&gadget_init);
+	init_completion(&asus_chg_detect_init);
+	//ASUS_BSP--- "[USB][NA][Spec] Add wait_for_completeion_timeout to fix boot adb fail"
+
 	motg->id_state = USB_ID_FLOAT;
 	wake_lock_init(&motg->wlock, WAKE_LOCK_SUSPEND, "msm_otg");
 	INIT_WORK(&motg->sm_work, msm_otg_sm_work);
 	INIT_DELAYED_WORK(&motg->chg_work, msm_chg_detect_work);
 	INIT_DELAYED_WORK(&motg->id_status_work, msm_id_status_w);
+	//ASUS_BSP+++ "[USB][NA][Spec] Add ASUS charger mode support"
+	INIT_WORK(&asus_usb_work, asus_usb_detect_work);
+	INIT_WORK(&asus_usb_cdp_work, asus_usb_detect_cdp_work);
+	INIT_DELAYED_WORK(&asus_chg_work, asus_chg_detect_work);
+	INIT_DELAYED_WORK(&asus_chg_cdp_work, asus_chg_detect_cdp_work);
+	//ASUS_BSP--- "[USB][NA][Spec] Add ASUS charger mode support
 	setup_timer(&motg->chg_check_timer, msm_otg_chg_check_timer_func,
 				(unsigned long) motg);
 	motg->otg_wq = alloc_ordered_workqueue("k_otg", 0);
@@ -4885,7 +5319,10 @@ static int msm_otg_remove(struct platform_device *pdev)
 	cancel_delayed_work_sync(&motg->id_status_work);
 	cancel_work_sync(&motg->sm_work);
 	destroy_workqueue(motg->otg_wq);
-
+	//ASUS_BSP+++ "[USB][NA][Spec] Add ASUS charger mode support"
+	cancel_delayed_work_sync(&asus_chg_work);
+	cancel_delayed_work_sync(&asus_chg_cdp_work);
+	//ASUS_BSP--- "[USB][NA][Spec] Add ASUS charger mode support"
 	pm_runtime_resume(&pdev->dev);
 
 	device_init_wakeup(&pdev->dev, 0);

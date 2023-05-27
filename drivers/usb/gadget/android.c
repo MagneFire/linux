@@ -85,11 +85,21 @@ static const char longname[] = "Gadget Android";
 #define PRODUCT_ID		0x0001
 
 #define ANDROID_DEVICE_NODE_NAME_LENGTH 11
+
+//ASUS_BSP+++ "[USB][NA][Spec] Add wait_for_completeion_timeout to fix boot adb fail"
+extern struct completion gadget_init;
+extern struct completion asus_chg_detect_init;
+//ASUS_BSP--- "[USB][NA][Spec] Add wait_for_completeion_timeout to fix boot adb fail"
+
 /* f_midi configuration */
 #define MIDI_INPUT_PORTS    1
 #define MIDI_OUTPUT_PORTS   1
 #define MIDI_BUFFER_SIZE    1024
 #define MIDI_QUEUE_LENGTH   32
+
+//ASUS_BSP+++ "[USB][NA][Spec] Add ASUS charger mode support"
+struct android_dev *_android_dev;
+//ASUS_BSP--- "[USB][NA][Spec] Add ASUS charger mode support"
 
 struct android_usb_function {
 	char *name;
@@ -282,6 +292,18 @@ enum android_device_state {
 	USB_SUSPENDED,
 	USB_RESUMED
 };
+
+//ASUS_BSP+++ "[USB][NA][Spec] Add ASUS charger mode support"
+bool getSoftconnect(void)
+{
+	struct android_dev *dev = _android_dev;
+
+	if ( dev != NULL )
+		return dev->enabled;
+	else
+		return 0;
+}
+//ASUS_BSP--- "[USB][NA][Spec] Add ASUS charger mode support"
 
 static const char *pm_qos_to_string(enum android_pm_qos_state state)
 {
@@ -481,7 +503,7 @@ static void android_work(struct work_struct *data)
 		}
 		pr_info("%s: sent uevent %s\n", __func__, uevent_envp[0]);
 	} else {
-		pr_info("%s: did not send uevent (%d %d %pK)\n", __func__,
+		pr_info("%s: did not send uevent (%d %d %p)\n", __func__,
 			 dev->connected, dev->sw_connected, cdev->config);
 	}
 }
@@ -519,6 +541,14 @@ static int android_enable(struct android_dev *dev)
 		diff = ktime_sub(ktime_get(), dev->last_disconnect);
 		if (ktime_to_ms(diff) < MIN_DISCONNECT_DELAY_MS)
 			msleep(MIN_DISCONNECT_DELAY_MS - ktime_to_ms(diff));
+
+		//ASUS_BSP--- "[USB][NA][Spec] Add wait_for_completeion_timeout to fix boot adb fail"
+		if (!asus_chg_detect_init.done) {
+			pr_info("[USB] %s: asus_chg_detect_init: wait_for_completion\n", __func__);
+			wait_for_completion(&asus_chg_detect_init);
+			asus_chg_detect_init.done = 1;
+		}
+		//ASUS_BSP--- "[USB][NA][Spec] Add wait_for_completeion_timeout to fix boot adb fail"
 
 		usb_gadget_connect(cdev->gadget);
 	}
@@ -928,6 +958,7 @@ static int rmnet_function_bind_config(struct android_usb_function *f,
 	static int rmnet_initialized, ports;
 
 	if (!rmnet_initialized) {
+		rmnet_initialized = 1;
 		strlcpy(buf, rmnet_transports, sizeof(buf));
 		b = strim(buf);
 
@@ -956,11 +987,8 @@ static int rmnet_function_bind_config(struct android_usb_function *f,
 		err = rmnet_gport_setup();
 		if (err) {
 			pr_err("rmnet: Cannot setup transports");
-			frmnet_deinit_port();
-			ports = 0;
 			goto out;
 		}
-		rmnet_initialized = 1;
 	}
 
 	for (i = 0; i < ports; i++) {
@@ -3522,6 +3550,13 @@ static ssize_t enable_store(struct device *pdev, struct device_attribute *attr,
 		 * pull-up is enabled immediately. The enumeration is
 		 * reliable with 100 msec delay.
 		 */
+
+		if((cdev->desc.idVendor== __constant_cpu_to_le16(0x18D1)) &&
+		      (cdev->desc.idProduct==__constant_cpu_to_le16(0x4EE7))) {
+			cdev->desc.idVendor = __constant_cpu_to_le16(0x0B05);
+			cdev->desc.idProduct = __constant_cpu_to_le16(0x7770);
+		}
+
 		list_for_each_entry(conf, &dev->configs, list_item)
 			list_for_each_entry(f_holder, &conf->enabled_functions,
 						enabled_list) {
@@ -3610,6 +3645,24 @@ out:
 	return snprintf(buf, PAGE_SIZE, "%s\n", state);
 }
 
+//ASUS_BSP+++ "[USB][NA][Spec] avoid set null to iSerial"
+static ssize_t serial_show(struct device *pdev, struct device_attribute *attr,
+			   char *buf)
+{
+	return snprintf(buf, PAGE_SIZE, "%s\n", serial_string);
+}
+static ssize_t serial_store(struct device *pdev, struct device_attribute *attr,
+			    const char *buff, size_t size)
+{
+	//ensure SSN number in the ASCII range of "0" to "Z"
+	if(buff[0] >= 0x30 && buff[0] <= 0x5a)
+		sscanf(buff, "%s", serial_string);
+	else
+		sscanf("111111111111111", "%s", serial_string);
+	return size;
+}
+//ASUS_BSP--- "[USB][NA][Spec] avoid set null to iSerial"
+
 #define ANDROID_DEV_ATTR(field, format_string)				\
 static ssize_t								\
 field ## _show(struct device *pdev, struct device_attribute *attr,	\
@@ -3684,7 +3737,10 @@ DESCRIPTOR_ATTR(bDeviceSubClass, "%d\n")
 DESCRIPTOR_ATTR(bDeviceProtocol, "%d\n")
 DESCRIPTOR_STRING_ATTR(iManufacturer, manufacturer_string)
 DESCRIPTOR_STRING_ATTR(iProduct, product_string)
-DESCRIPTOR_STRING_ATTR(iSerial, serial_string)
+//ASUS_BSP+++ "[USB][NA][Spec] avoid set null to iSerial"
+//DESCRIPTOR_STRING_ATTR(iSerial, serial_string)
+static DEVICE_ATTR(iSerial, S_IRUGO | S_IWUSR, serial_show, serial_store);
+//ASUS_BSP--- "[USB][NA][Spec] avoid set null to iSerial"
 
 static DEVICE_ATTR(functions, S_IRUGO | S_IWUSR, functions_show,
 						 functions_store);
@@ -3767,6 +3823,13 @@ static int android_bind(struct usb_composite_dev *cdev)
 	 * it is done configuring the functions.
 	 */
 	usb_gadget_disconnect(gadget);
+
+	//ASUS_BSP+++ "[USB][NA][Spec] Add wait_for_completeion_timeout to fix boot adb fail"
+	if(!gadget_init.done){
+		complete(&gadget_init);
+		pr_info("[USB] %s: gadget_init: complete\n", __func__);
+	}
+	//ASUS_BSP--- "[USB][NA][Spec] Add wait_for_completeion_timeout to fix boot adb fail"
 
 	/* Allocate string descriptor numbers ... note that string
 	 * contents can be overridden by the composite_dev glue.
@@ -4039,7 +4102,7 @@ static int usb_diag_update_pid_and_serial_num(u32 pid, const char *snum)
 		return -ENODEV;
 	}
 
-	pr_debug("%s: dload:%pK pid:%x serial_num:%s\n",
+	pr_debug("%s: dload:%p pid:%x serial_num:%s\n",
 				__func__, diag_dload, pid, snum);
 
 	/* update pid */
@@ -4244,6 +4307,10 @@ static int android_probe(struct platform_device *pdev)
 		android_dev->idle_pc_rpm_no_int_secs = IDLE_PC_RPM_NO_INT_SECS;
 	}
 	strlcpy(android_dev->pm_qos, "high", sizeof(android_dev->pm_qos));
+
+	//ASUS_BSP+++ "[USB][NA][Spec] Add ASUS charger mode support"
+	_android_dev = android_dev;
+	//ASUS_BSP--- "[USB][NA][Spec] Add ASUS charger mode support"
 
 	return ret;
 err_probe:
