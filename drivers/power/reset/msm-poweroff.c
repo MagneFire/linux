@@ -45,6 +45,7 @@
 #define SCM_EDLOAD_MODE			0X01
 #define SCM_DLOAD_CMD			0x10
 
+#define ABNORMAL_CRASH_MAGICNUM		0x77665566
 
 static int restart_mode;
 static void *restart_reason, *dload_type_addr;
@@ -284,14 +285,17 @@ static void msm_restart_prepare(const char *cmd)
 		need_warm_reset = (get_dload_mode() ||
 				(cmd != NULL && cmd[0] != '\0'));
 	}
-
+#if 0
 	/* Hard reset the PMIC unless memory contents must be maintained. */
 	if (need_warm_reset) {
 		qpnp_pon_system_pwr_off(PON_POWER_OFF_WARM_RESET);
 	} else {
 		qpnp_pon_system_pwr_off(PON_POWER_OFF_HARD_RESET);
 	}
-
+#else
+	/* In order to keep ram for pstore, need always warm reset*/
+	qpnp_pon_system_pwr_off(PON_POWER_OFF_WARM_RESET);
+#endif
 	if (cmd != NULL) {
 		if (!strncmp(cmd, "bootloader", 10)) {
 			qpnp_pon_set_restart_reason(
@@ -570,6 +574,10 @@ skip_sysfs_create:
 
 	if (scm_is_call_available(SCM_SVC_PWR, SCM_IO_DEASSERT_PS_HOLD) > 0)
 		scm_deassert_ps_hold_supported = true;
+
+	if (restart_reason) {
+		__raw_writel(ABNORMAL_CRASH_MAGICNUM, restart_reason);
+	}
 
 	set_dload_mode(download_mode);
 	if (!download_mode)
