@@ -1275,6 +1275,9 @@ static int _request_firmware(struct fw_desc *desc)
 	struct firmware *fw;
 	long timeout;
 	int ret;
+	// ASUS_BSP+++ "Load wcnss firmware from /system/etc/firmware instead of /firmware/image"
+	struct firmware_buf *buf;
+	// ASUS_BSP--- "Load wcnss firmware from /system/etc/firmware instead of /firmware/image"
 
 	if (!desc->firmware_p)
 		return -EINVAL;
@@ -1305,18 +1308,37 @@ static int _request_firmware(struct fw_desc *desc)
 		}
 	}
 
-	ret = fw_get_filesystem_firmware(desc->device, fw->priv,
-					 desc->dest_addr, desc->dest_size);
-	if (ret) {
-		if (!(desc->opt_flags & FW_OPT_NO_WARN))
-			dev_dbg(desc->device,
-				 "Direct firmware load for %s failed with error %d\n",
-				 desc->name, ret);
-		if (desc->opt_flags & FW_OPT_USERHELPER) {
-			dev_dbg(desc->device, "Falling back to user helper\n");
-			ret = fw_load_from_user_helper(fw, desc, timeout);
+
+	// ASUS_BSP+++ "Load wcnss firmware from /system/etc/firmware instead of /firmware/image"
+	buf = fw->priv;
+
+	if ((strncmp(buf->fw_id, "wcnss", 5) == 0) || (strncmp(buf->fw_id, "wlan/prima", 10) == 0)) {
+		/* load firmware from user helper first for wcnss firmware */
+		ret = fw_load_from_user_helper(fw, desc, timeout);
+		if (!ret)
+			printk("[wlan]: %s: loading %s from fw_load_from_user_helper\n", __func__, buf->fw_id);
+		else { /* fw_load_from_user_helper failed */
+			printk("[wlan]: %s: loading %s from fw_get_filesystem_firmware\n", __func__, buf->fw_id);
+			ret = fw_get_filesystem_firmware(desc->device, fw->priv, desc->dest_addr, desc->dest_size);
+		}
+	} else if (strncmp(buf->fw_id, "HX852XES", 8) == 0) {
+		/* load firmware from user helper for touch firmware */
+		ret = fw_load_from_user_helper(fw, desc, timeout);
+	} else { /* qualcomm default action */
+		ret = fw_get_filesystem_firmware(desc->device, fw->priv,
+				 desc->dest_addr, desc->dest_size);
+		if (ret) {
+			if (!(desc->opt_flags & FW_OPT_NO_WARN))
+				dev_dbg(desc->device,
+					"Direct firmware load for %s failed with error %d\n",
+					desc->name, ret);
+			if (desc->opt_flags & FW_OPT_USERHELPER) {
+				dev_dbg(desc->device, "Falling back to user helper\n");
+				ret = fw_load_from_user_helper(fw, desc, timeout);
+			}
 		}
 	}
+	// ASUS_BSP--- "Load wcnss firmware from /system/etc/firmware instead of /firmware/image"
 
 	if (!ret)
 		ret = assign_firmware_buf(fw, desc->device, desc->opt_flags);

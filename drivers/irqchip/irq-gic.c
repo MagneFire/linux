@@ -51,6 +51,8 @@
 #include "irq-gic-common.h"
 #include "irqchip.h"
 
+int gpio_irq_cnt, gpio_resume_irq[8];
+
 union gic_base {
 	void __iomem *common_base;
 	void __percpu * __iomem *percpu_base;
@@ -256,6 +258,36 @@ void gic_show_pending_irq(void)
 		}
 	}
 }
+//ASUS_BSP+++ "for wlan wakeup trace"
+extern int g_wcnss_wlanrx_irq;
+static int wcnss_irq_flag_rx = 0;
+static int wcnss_irq_flag_wdi = 0;
+
+int wcnss_irq_flag_function_rx(void)
+{
+    if( wcnss_irq_flag_rx == 1 ) {
+        wcnss_irq_flag_rx = 0;
+        return 1;
+    }
+
+    return 0;
+}
+EXPORT_SYMBOL(wcnss_irq_flag_function_rx);
+
+
+int wcnss_irq_flag_function_wdi(void){
+    if( wcnss_irq_flag_wdi == 1 ){
+        wcnss_irq_flag_wdi = 0;
+        wcnss_irq_flag_rx = 0;
+        return 1;
+    }
+
+    return 0;
+}
+EXPORT_SYMBOL(wcnss_irq_flag_function_wdi);
+
+
+//ASUS_BSP--- "for wlan wakeup trace"
 
 static void gic_show_resume_irq(struct gic_chip_data *gic)
 {
@@ -263,6 +295,8 @@ static void gic_show_resume_irq(struct gic_chip_data *gic)
 	u32 enabled;
 	u32 pending[32];
 	void __iomem *base = gic_data_dist_base(gic);
+
+	gpio_irq_cnt=0;
 
 	if (!msm_show_resume_irq_mask)
 		return;
@@ -278,9 +312,7 @@ static void gic_show_resume_irq(struct gic_chip_data *gic)
 	for (i = find_first_bit((unsigned long *)pending, gic->gic_irqs);
 	i < gic->gic_irqs;
 	i = find_next_bit((unsigned long *)pending, gic->gic_irqs, i+1)) {
-		unsigned int irq = irq_find_mapping(gic->domain,
-						i + gic->irq_offset);
-		struct irq_desc *desc = irq_to_desc(irq);
+		struct irq_desc *desc = irq_to_desc(i + gic->irq_offset);
 		const char *name = "null";
 
 		if (desc == NULL)
@@ -288,8 +320,21 @@ static void gic_show_resume_irq(struct gic_chip_data *gic)
 		else if (desc->action && desc->action->name)
 			name = desc->action->name;
 
-		pr_warning("%s: %d triggered %s\n", __func__,
-					i + gic->irq_offset, name);
+		pr_warning("%s: %d triggered %s (%d)\n", __func__, i, name, i + gic->irq_offset);
+		if(gpio_irq_cnt < 8) {
+			gpio_resume_irq[gpio_irq_cnt]=i;
+			gpio_irq_cnt++;
+		}
+
+		//ASUS_BSP+++ "for wlan wakeup trace"
+		if( (i + gic->irq_offset) == 178 ){
+			printk("%s: [wlan] wcnss gic(%d) triggered g_wcnss_wlanrx_irq(%d)\n", __func__,
+					i + gic->irq_offset, g_wcnss_wlanrx_irq);
+			printk("%s: [wlan] wcnss force g_wcnss_wlanrx_irq=178, wcnss_irq_flag_rx=1\n", __func__);
+		    wcnss_irq_flag_rx = 1;
+		    wcnss_irq_flag_wdi = 1;
+		}
+		//ASUS_BSP--- "for wlan wakeup trace"
 	}
 }
 
