@@ -2309,21 +2309,6 @@ VOS_STATUS WDA_prepareConfigTLV(v_PVOID_t pVosContext,
 
 
    wdiStartParams->usConfigBufferLen = (tANI_U8 *)tlvStruct - tlvStructStart ;
-
-   /* QWLAN_HAL_CFG_DISABLE_SCAN_DURING_SCO  */
-   tlvStruct->type = QWLAN_HAL_CFG_DISABLE_SCAN_DURING_SCO ;
-   tlvStruct->length = sizeof(tANI_U32);
-   configDataValue = (tANI_U32 *)(tlvStruct + 1);
-
-   if (wlan_cfgGetInt(pMac, WNI_CFG_DISABLE_SCAN_DURING_SCO,
-                                            configDataValue ) != eSIR_SUCCESS)
-   {
-      VOS_TRACE( VOS_MODULE_ID_WDA, VOS_TRACE_LEVEL_ERROR,
-               "Failed to get value for WNI_CFG_DISABLE_SCAN_DURING_SCO");
-      goto handle_failure;
-   }
-   tlvStruct = (tHalCfg *)( (tANI_U8 *) tlvStruct
-                           + sizeof(tHalCfg) + tlvStruct->length) ;
 #ifdef WLAN_DEBUG
    {
       int i;
@@ -4680,7 +4665,7 @@ void WDA_DelSTASelfReqCallback(WDI_Status   wdiStatus,
    tDelStaSelfParams     *delStaSelfParams;
    
    VOS_TRACE(VOS_MODULE_ID_WDA, VOS_TRACE_LEVEL_INFO,
-             "<------ %s, wdiStatus: %d pWdaParams: %pK",
+             "<------ %s, wdiStatus: %d pWdaParams: %p",
               __func__, wdiStatus, pWdaParams); 
 
    if (NULL == pWdaParams)
@@ -6795,7 +6780,7 @@ VOS_STATUS WDA_ProcessAddBASessionReq(tWDA_CbContext *pWDA,
    if((VOS_STATUS_SUCCESS != WDA_TL_GET_STA_STATE(pWDA->pVosContext, pAddBAReqParams->staIdx, &tlSTAState)) ||
     ((WLANTL_STA_CONNECTED != tlSTAState) && (WLANTL_STA_AUTHENTICATED != tlSTAState)))
    {
-       VOS_TRACE( VOS_MODULE_ID_WDA, VOS_TRACE_LEVEL_WARN,
+       VOS_TRACE( VOS_MODULE_ID_WDA, VOS_TRACE_LEVEL_ERROR,
         "Peer staIdx %d hasn't established yet(%d). Send ADD BA failure to PE.", pAddBAReqParams->staIdx, tlSTAState );
        status = WDI_STATUS_E_NOT_ALLOWED;
        pAddBAReqParams->status =
@@ -10972,7 +10957,7 @@ VOS_STATUS WDA_ProcessHostOffloadReq(tWDA_CbContext *pWDA,
 
    if(IS_WDI_STATUS_FAILURE(wstatus))
    {
-      VOS_TRACE( VOS_MODULE_ID_WDA, VOS_TRACE_LEVEL_WARN,
+      VOS_TRACE( VOS_MODULE_ID_WDA, VOS_TRACE_LEVEL_ERROR,
               "Failure in host offload REQ WDI API, free all the memory %d",
                wstatus);
       status = CONVERT_WDI2VOS_STATUS(wstatus);
@@ -12141,7 +12126,7 @@ void WDA_FTMCommandReqCallback(void *ftmCmdRspData,
    if((NULL == pWDA) || (NULL == ftmCmdRspData))
    {
       VOS_TRACE(VOS_MODULE_ID_WDA, VOS_TRACE_LEVEL_ERROR,
-                "%s, invalid input %pK, %pK",__func__,  pWDA, ftmCmdRspData);
+                "%s, invalid input %p, %p",__func__,  pWDA, ftmCmdRspData);
       return;
    }
    /* Release Current FTM Command Request */
@@ -13379,7 +13364,7 @@ VOS_STATUS WDA_TxComplete( v_PVOID_t pVosContext, vos_pkt_t *pData,
       else
       {
          VOS_TRACE( VOS_MODULE_ID_WDA, VOS_TRACE_LEVEL_WARN,
-                           "%s:packet (%pK) is already freed",
+                           "%s:packet (%p) is already freed",
                            __func__, pData);
          //Return from here since we reaching here because the packet already timeout
          return status;
@@ -13430,14 +13415,14 @@ VOS_STATUS WDA_TxPacket(tWDA_CbContext *pWDA,
    if((NULL == pWDA)||(NULL == pFrmBuf)) 
    {
       VOS_TRACE( VOS_MODULE_ID_WDA, VOS_TRACE_LEVEL_ERROR,
-                           "%s:pWDA %pK or pFrmBuf %pK is NULL",
+                           "%s:pWDA %p or pFrmBuf %p is NULL",
                            __func__,pWDA,pFrmBuf); 
       VOS_ASSERT(0);
       return VOS_STATUS_E_FAILURE;
    }
 
    VOS_TRACE( VOS_MODULE_ID_WDA, VOS_TRACE_LEVEL_INFO_HIGH, 
-               "Tx Mgmt Frame Subtype: %d alloc(%pK) txBdToken = %u",
+               "Tx Mgmt Frame Subtype: %d alloc(%p) txBdToken = %u",
                pFc->subType, pFrmBuf, txBdToken);
    pMac = (tpAniSirGlobal )VOS_GET_MAC_CTXT(pWDA->pVosContext);
    if(NULL == pMac)

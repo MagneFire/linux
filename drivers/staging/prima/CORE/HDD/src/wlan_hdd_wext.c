@@ -105,7 +105,6 @@
 
 #include "vos_utils.h"
 #include "sapInternal.h"
-#include "wlan_hdd_request_manager.h"
 
 #ifdef CONFIG_HAS_EARLYSUSPEND
 extern void hdd_suspend_wlan(struct early_suspend *wlan_suspend);
@@ -736,14 +735,14 @@ static void hdd_GetRssiCB( v_S7_t rssi, tANI_U32 staId, void *pContext )
 
    if (ioctl_debug)
    {
-      pr_info("%s: rssi [%d] STA [%d] pContext [%pK]\n",
+      pr_info("%s: rssi [%d] STA [%d] pContext [%p]\n",
               __func__, (int)rssi, (int)staId, pContext);
    }
 
    if (NULL == pContext)
    {
       hddLog(VOS_TRACE_LEVEL_ERROR,
-             "%s: Bad param, pContext [%pK]",
+             "%s: Bad param, pContext [%p]",
              __func__, pContext);
       return;
    }
@@ -762,11 +761,11 @@ static void hdd_GetRssiCB( v_S7_t rssi, tANI_U32 staId, void *pContext )
       /* the caller presumably timed out so there is nothing we can do */
       spin_unlock(&hdd_context_lock);
       hddLog(VOS_TRACE_LEVEL_WARN,
-             "%s: Invalid context, pAdapter [%pK] magic [%08x]",
+             "%s: Invalid context, pAdapter [%p] magic [%08x]",
               __func__, pAdapter, pStatsContext->magic);
       if (ioctl_debug)
       {
-         pr_info("%s: Invalid context, pAdapter [%pK] magic [%08x]\n",
+         pr_info("%s: Invalid context, pAdapter [%p] magic [%08x]\n",
                  __func__, pAdapter, pStatsContext->magic);
       }
       return;
@@ -792,35 +791,62 @@ static void hdd_GetRssiCB( v_S7_t rssi, tANI_U32 staId, void *pContext )
    spin_unlock(&hdd_context_lock);
 }
 
-struct snr_priv {
-	int8_t snr;
-};
-
-/**
- * hdd_get_snr_cb() - "Get SNR" callback function
- * @snr: Current SNR of the station
- * @sta_id: ID of the station
- * @context: opaque context originally passed to SME.  HDD always passes
- *           a cookie for the request context
- *
- * Return: None
- */
-static void hdd_get_snr_cb(tANI_S8 snr, tANI_U32 staId, void *context)
+static void hdd_GetSnrCB(tANI_S8 snr, tANI_U32 staId, void *pContext)
 {
-	struct hdd_request *request;
-	struct snr_priv *priv;
+   struct statsContext *pStatsContext;
+   hdd_adapter_t *pAdapter;
 
-	request = hdd_request_get(context);
-	if (!request) {
-		hddLog(VOS_TRACE_LEVEL_ERROR, FL("Obsolete request"));
-		return;
-	}
+   if (ioctl_debug)
+   {
+      pr_info("%s: snr [%d] STA [%d] pContext [%p]\n",
+              __func__, (int)snr, (int)staId, pContext);
+   }
 
-	/* propagate response back to requesting thread */
-	priv = hdd_request_priv(request);
-	priv->snr = snr;
-	hdd_request_complete(request);
-	hdd_request_put(request);
+   if (NULL == pContext)
+   {
+      hddLog(VOS_TRACE_LEVEL_ERROR,
+             "%s: Bad param, pContext [%p]",
+             __func__, pContext);
+      return;
+   }
+
+   pStatsContext = pContext;
+   pAdapter      = pStatsContext->pAdapter;
+
+   /* there is a race condition that exists between this callback
+      function and the caller since the caller could time out either
+      before or while this code is executing.  we use a spinlock to
+      serialize these actions */
+   spin_lock(&hdd_context_lock);
+
+   if ((NULL == pAdapter) || (SNR_CONTEXT_MAGIC != pStatsContext->magic))
+   {
+      /* the caller presumably timed out so there is nothing we can do */
+      spin_unlock(&hdd_context_lock);
+      hddLog(VOS_TRACE_LEVEL_WARN,
+             "%s: Invalid context, pAdapter [%p] magic [%08x]",
+              __func__, pAdapter, pStatsContext->magic);
+      if (ioctl_debug)
+      {
+         pr_info("%s: Invalid context, pAdapter [%p] magic [%08x]\n",
+                 __func__, pAdapter, pStatsContext->magic);
+      }
+      return;
+   }
+
+   /* context is valid so caller is still waiting */
+
+   /* paranoia: invalidate the magic */
+   pStatsContext->magic = 0;
+
+   /* copy over the snr */
+   pAdapter->snr = snr;
+
+   /* notify the caller */
+   complete(&pStatsContext->completion);
+
+   /* serialization is complete */
+   spin_unlock(&hdd_context_lock);
 }
 
 VOS_STATUS wlan_hdd_get_rssi(hdd_adapter_t *pAdapter, v_S7_t *rssi_value)
@@ -938,7 +964,7 @@ VOS_STATUS wlan_hdd_get_frame_logs(hdd_adapter_t *pAdapter, v_U8_t flag)
    pHddCtx = WLAN_HDD_GET_CTX(pAdapter);
    if (!pHddCtx->mgmt_frame_logging)
    {
-      hddLog(LOGW, FL("Frame Logging not init!"));
+      hddLog(VOS_TRACE_LEVEL_ERROR,"%s: Frame Logging not init!", __func__);
       return VOS_STATUS_E_AGAIN;
    }
 
@@ -970,17 +996,12 @@ VOS_STATUS wlan_hdd_get_frame_logs(hdd_adapter_t *pAdapter, v_U8_t flag)
 
 VOS_STATUS wlan_hdd_get_snr(hdd_adapter_t *pAdapter, v_S7_t *snr)
 {
+   struct statsContext context;
    hdd_context_t *pHddCtx;
    hdd_station_ctx_t *pHddStaCtx;
    eHalStatus hstatus;
-   int ret;
-   void *cookie;
-   struct hdd_request *request;
-   struct snr_priv *priv;
-   static const struct hdd_request_params params = {
-        .priv_size = sizeof(*priv),
-        .timeout_ms = WLAN_WAIT_TIME_STATS,
-   };
+   long lrc;
+   int valid;
 
    ENTER();
 
@@ -993,8 +1014,8 @@ VOS_STATUS wlan_hdd_get_snr(hdd_adapter_t *pAdapter, v_S7_t *snr)
 
    pHddCtx = WLAN_HDD_GET_CTX(pAdapter);
 
-   ret = wlan_hdd_validate_context(pHddCtx);
-   if (0 != ret)
+   valid = wlan_hdd_validate_context(pHddCtx);
+   if (0 != valid)
    {
        return VOS_STATUS_E_FAULT;
    }
@@ -1006,17 +1027,14 @@ VOS_STATUS wlan_hdd_get_snr(hdd_adapter_t *pAdapter, v_S7_t *snr)
        return VOS_STATUS_E_FAULT;
    }
 
-   request = hdd_request_alloc(&params);
-   if (!request) {
-       hddLog(VOS_TRACE_LEVEL_ERROR, FL("Request allocation failure"));
-       return VOS_STATUS_E_FAULT;
-   }
-   cookie = hdd_request_cookie(request);
+   init_completion(&context.completion);
+   context.pAdapter = pAdapter;
+   context.magic = SNR_CONTEXT_MAGIC;
 
-   hstatus = sme_GetSnr(pHddCtx->hHal, hdd_get_snr_cb,
+   hstatus = sme_GetSnr(pHddCtx->hHal, hdd_GetSnrCB,
                          pHddStaCtx->conn_info.staId[ 0 ],
                          pHddStaCtx->conn_info.bssId,
-                         cookie);
+                         &context);
    if (eHAL_STATUS_SUCCESS != hstatus)
    {
        hddLog(VOS_TRACE_LEVEL_ERROR,"%s: Unable to retrieve RSSI",
@@ -1026,24 +1044,30 @@ VOS_STATUS wlan_hdd_get_snr(hdd_adapter_t *pAdapter, v_S7_t *snr)
    else
    {
        /* request was sent -- wait for the response */
-       ret = hdd_request_wait_for_response(request);
-       if (ret) {
-           hddLog(VOS_TRACE_LEVEL_ERROR,
-                  FL("SME timed out while retrieving SNR"));
-           /* we'll now returned a cached value below */
-       } else {
-           /* update the adapter with the fresh results */
-           priv = hdd_request_priv(request);
-           pAdapter->snr = priv->snr;
-      }
+       lrc = wait_for_completion_interruptible_timeout(&context.completion,
+                                    msecs_to_jiffies(WLAN_WAIT_TIME_STATS));
+       if (lrc <= 0)
+       {
+          hddLog(VOS_TRACE_LEVEL_ERROR, "%s: SME %s while retrieving SNR",
+                 __func__, (0 == lrc) ? "timeout" : "interrupt");
+          /* we'll now returned a cached value below */
+       }
    }
 
-   /*
-    * either we never sent a request, we sent a request and
-    * received a response or we sent a request and timed out.
-    * regardless we are done with the request.
-    */
-   hdd_request_put(request);
+   /* either we never sent a request, we sent a request and received a
+      response or we sent a request and timed out.  if we never sent a
+      request or if we sent a request and got a response, we want to
+      clear the magic out of paranoia.  if we timed out there is a
+      race condition such that the callback function could be
+      executing at the same time we are. of primary concern is if the
+      callback function had already verified the "magic" but had not
+      yet set the completion variable when a timeout occurred. we
+      serialize these activities by invalidating the magic while
+      holding a shared spinlock which will cause us to block if the
+      callback is currently executing */
+   spin_lock(&hdd_context_lock);
+   context.magic = 0;
+   spin_unlock(&hdd_context_lock);
 
    *snr = pAdapter->snr;
 
@@ -1059,14 +1083,14 @@ static void hdd_GetRoamRssiCB( v_S7_t rssi, tANI_U32 staId, void *pContext )
    hdd_adapter_t *pAdapter;
    if (ioctl_debug)
    {
-      pr_info("%s: rssi [%d] STA [%d] pContext [%pK]\n",
+      pr_info("%s: rssi [%d] STA [%d] pContext [%p]\n",
               __func__, (int)rssi, (int)staId, pContext);
    }
 
    if (NULL == pContext)
    {
       hddLog(VOS_TRACE_LEVEL_ERROR,
-             "%s: Bad param, pContext [%pK]",
+             "%s: Bad param, pContext [%p]",
              __func__, pContext);
       return;
    }
@@ -1085,11 +1109,11 @@ static void hdd_GetRoamRssiCB( v_S7_t rssi, tANI_U32 staId, void *pContext )
       /* the caller presumably timed out so there is nothing we can do */
       spin_unlock(&hdd_context_lock);
       hddLog(VOS_TRACE_LEVEL_WARN,
-             "%s: Invalid context, pAdapter [%pK] magic [%08x]",
+             "%s: Invalid context, pAdapter [%p] magic [%08x]",
               __func__, pAdapter, pStatsContext->magic);
       if (ioctl_debug)
       {
-         pr_info("%s: Invalid context, pAdapter [%pK] magic [%08x]\n",
+         pr_info("%s: Invalid context, pAdapter [%p] magic [%08x]\n",
                  __func__, pAdapter, pStatsContext->magic);
       }
       return;
@@ -1436,7 +1460,7 @@ v_U8_t* wlan_hdd_get_vendor_oui_ie_ptr(v_U8_t *oui, v_U8_t oui_size, v_U8_t *ie,
                     eid,elem_len,left);
             return NULL;
         }
-        if ((elem_id == eid) && (elem_len >= oui_size))
+        if (elem_id == eid)
         {
             if(memcmp( &ptr[2], oui, oui_size)==0)
                 return ptr;
@@ -2366,13 +2390,6 @@ static int __iw_set_genie(struct net_device *dev,
         hddLog(VOS_TRACE_LEVEL_INFO, "%s: IE[0x%X], LEN[%d]",
             __func__, elementId, eLen);
 
-        if (remLen < eLen) {
-            hddLog(LOGE, "Remaining len: %u less than ie len: %u",
-                   remLen, eLen);
-            ret = -EINVAL;
-            goto exit;
-        }
-
         switch ( elementId )
          {
             case IE_EID_VENDOR:
@@ -2455,11 +2472,8 @@ static int __iw_set_genie(struct net_device *dev,
                 hddLog (LOGE, "%s Set UNKNOWN IE %X",__func__, elementId);
                 goto exit;
     }
+        genie += eLen;
         remLen -= eLen;
-
-        /* Move genie only if next element is present */
-        if (remLen >= 2)
-            genie += eLen;
     }
 
 exit:
@@ -2544,21 +2558,16 @@ static int __iw_get_genie(struct net_device *dev,
                                    pAdapter->sessionId,
                                    &length,
                                    genIeBytes);
-    if (eHAL_STATUS_SUCCESS != status) {
-        hddLog(LOGE, FL("failed to get WPA-RSN IE data"));
+    length = VOS_MIN((u_int16_t) length, DOT11F_IE_RSN_MAX_LEN);
+    if (wrqu->data.length < length)
+    {
+        hddLog(LOG1, "%s: failed to copy data to user buffer", __func__);
         return -EFAULT;
     }
-
-    wrqu->data.length = length;
-    if (length > DOT11F_IE_RSN_MAX_LEN) {
-        hddLog(LOGE,
-               FL("invalid buffer length length:%d"), length);
-        return -E2BIG;
-    }
-
     vos_mem_copy( extra, (v_VOID_t*)genIeBytes, length);
+    wrqu->data.length = length;
 
-    hddLog(LOG1, FL("RSN IE of %d bytes returned"), wrqu->data.length );
+    hddLog(LOG1,"%s: RSN IE of %d bytes returned", __func__, wrqu->data.length );
 
     EXIT();
 
@@ -3132,7 +3141,7 @@ static void iw_power_callback_fn (void *pContext, eHalStatus status)
    if (NULL == pContext)
    {
        hddLog(VOS_TRACE_LEVEL_ERROR,
-            "%s: Bad param, pContext [%pK]",
+            "%s: Bad param, pContext [%p]",
               __func__, pContext);
        return;
    }
@@ -3198,14 +3207,14 @@ void hdd_GetClassA_statisticsCB(void *pStats, void *pContext)
 
    if (ioctl_debug)
    {
-      pr_info("%s: pStats [%pK] pContext [%pK]\n",
+      pr_info("%s: pStats [%p] pContext [%p]\n",
               __func__, pStats, pContext);
    }
 
    if ((NULL == pStats) || (NULL == pContext))
    {
       hddLog(VOS_TRACE_LEVEL_ERROR,
-             "%s: Bad param, pStats [%pK] pContext [%pK]",
+             "%s: Bad param, pStats [%p] pContext [%p]",
               __func__, pStats, pContext);
       return;
    }
@@ -3225,11 +3234,11 @@ void hdd_GetClassA_statisticsCB(void *pStats, void *pContext)
       /* the caller presumably timed out so there is nothing we can do */
       spin_unlock(&hdd_context_lock);
       hddLog(VOS_TRACE_LEVEL_WARN,
-             "%s: Invalid context, pAdapter [%pK] magic [%08x]",
+             "%s: Invalid context, pAdapter [%p] magic [%08x]",
               __func__, pAdapter, pStatsContext->magic);
       if (ioctl_debug)
       {
-         pr_info("%s: Invalid context, pAdapter [%pK] magic [%08x]\n",
+         pr_info("%s: Invalid context, pAdapter [%p] magic [%08x]\n",
                  __func__, pAdapter, pStatsContext->magic);
       }
       return;
@@ -3330,14 +3339,14 @@ static void hdd_get_station_statisticsCB(void *pStats, void *pContext)
 
    if (ioctl_debug)
    {
-      pr_info("%s: pStats [%pK] pContext [%pK]\n",
+      pr_info("%s: pStats [%p] pContext [%p]\n",
               __func__, pStats, pContext);
    }
 
    if ((NULL == pStats) || (NULL == pContext))
    {
       hddLog(VOS_TRACE_LEVEL_ERROR,
-             "%s: Bad param, pStats [%pK] pContext [%pK]",
+             "%s: Bad param, pStats [%p] pContext [%p]",
              __func__, pStats, pContext);
       return;
    }
@@ -3357,11 +3366,11 @@ static void hdd_get_station_statisticsCB(void *pStats, void *pContext)
       /* the caller presumably timed out so there is nothing we can do */
       spin_unlock(&hdd_context_lock);
       hddLog(VOS_TRACE_LEVEL_WARN,
-             "%s: Invalid context, pAdapter [%pK] magic [%08x]",
+             "%s: Invalid context, pAdapter [%p] magic [%08x]",
              __func__, pAdapter, pStatsContext->magic);
       if (ioctl_debug)
       {
-         pr_info("%s: Invalid context, pAdapter [%pK] magic [%08x]\n",
+         pr_info("%s: Invalid context, pAdapter [%p] magic [%08x]\n",
                  __func__, pAdapter, pStatsContext->magic);
       }
       return;
@@ -3834,9 +3843,6 @@ static void parse_Bufferforpkt(tSirpkt80211 *pkt, u8 *pBuffer, u16 len)
     length += getByte(&temp) << 8;
     hddLog(VOS_TRACE_LEVEL_INFO,"Payload length : %d", length);
 
-    if (length >= WLAN_DISA_MAX_PAYLOAD_SIZE)
-        length = WLAN_DISA_MAX_PAYLOAD_SIZE;
-
     pkt->data.length = length;
 
     for (i = 0; i< length; i++) {
@@ -4170,15 +4176,15 @@ static int __iw_set_priv(struct net_device *dev,
     }
     else if (strcasecmp(cmd, "scan-active") == 0)
     {
-        hddLog(LOG1,
-                FL("making default scan to active"));
+        hddLog(VOS_TRACE_LEVEL_ERROR,
+                   FL("making default scan to active"));
         pHddCtx->scan_info.scan_mode = eSIR_ACTIVE_SCAN;
         ret = snprintf(cmd, cmd_len, "OK");
     }
     else if (strcasecmp(cmd, "scan-passive") == 0)
     {
-        hddLog(LOG1,
-               FL("making default scan to passive"));
+        hddLog(VOS_TRACE_LEVEL_ERROR,
+                   FL("making default scan to passive"));
         pHddCtx->scan_info.scan_mode = eSIR_PASSIVE_SCAN;
         ret = snprintf(cmd, cmd_len, "OK");
     }
@@ -4189,6 +4195,41 @@ static int __iw_set_priv(struct net_device *dev,
     else if( strcasecmp(cmd, "linkspeed") == 0 )
     {
         ret = iw_get_linkspeed(dev, info, wrqu, cmd);
+    }
+    else if( strncasecmp(cmd, "COUNTRY", 7) == 0 ) {
+        char *country_code;
+        long lrc;
+        eHalStatus eHal_status;
+
+        country_code =  cmd + 8;
+        hddLog(1, "[wlan]: country_code=%s.\n", country_code);
+        init_completion(&pAdapter->change_country_code);
+
+        eHal_status = sme_ChangeCountryCode(pHddCtx->hHal,
+                                            (void *)(tSmeChangeCountryCallback)wlan_hdd_change_country_code_callback,
+                                            country_code,
+                                            pAdapter,
+                                            pHddCtx->pvosContext,
+                                            eSIR_TRUE,
+                                            eSIR_TRUE);
+
+        /* Wait for completion */
+        lrc = wait_for_completion_interruptible_timeout(&pAdapter->change_country_code,
+                                    msecs_to_jiffies(WLAN_WAIT_TIME_STATS));
+
+        if (lrc <= 0)
+        {
+            hddLog(VOS_TRACE_LEVEL_ERROR,"%s: SME %s while setting country code ",
+                   __func__, "Timed out");
+        }
+
+        if (eHAL_STATUS_SUCCESS != eHal_status)
+        {
+            VOS_TRACE( VOS_MODULE_ID_VOSS, VOS_TRACE_LEVEL_ERROR,
+                       "%s: SME Change Country code fail", __func__);
+            kfree(cmd);
+            return -EIO;
+        }
     }
     else if( strncasecmp(cmd, "rssi", 4) == 0 )
     {
@@ -8328,14 +8369,11 @@ static int __iw_set_host_offload(struct net_device *dev,
         }
     }
 
-    vos_mem_zero(&offloadRequest, sizeof(offloadRequest));
-    offloadRequest.offloadType = pRequest->offloadType;
-    offloadRequest.enableOrDisable = pRequest->enableOrDisable;
-    vos_mem_copy(&offloadRequest.params, &pRequest->params,
-                 sizeof(pRequest->params));
-    vos_mem_copy(&offloadRequest.bssId, &pRequest->bssId.bytes,
-                 VOS_MAC_ADDRESS_LEN);
-
+    /* Execute offload request. The reason that we can copy the request information
+       from the ioctl structure to the SME structure is that they are laid out
+       exactly the same.  Otherwise, each piece of information would have to be
+       copied individually. */
+    memcpy(&offloadRequest, pRequest, wrqu->data.length);
     if (eHAL_STATUS_SUCCESS != sme_SetHostOffload(WLAN_HDD_GET_HAL_CTX(pAdapter),
                                         pAdapter->sessionId, &offloadRequest))
     {
@@ -8423,8 +8461,7 @@ static int __iw_set_keepalive_params(struct net_device *dev,
        copied individually. */
        memcpy(&keepaliveRequest, pRequest, wrqu->data.length);
 
-       hddLog(VOS_TRACE_LEVEL_INFO, "set Keep: TP before SME %d",
-                                     keepaliveRequest.timePeriod);
+       hddLog(VOS_TRACE_LEVEL_ERROR, "set Keep: TP before SME %d", keepaliveRequest.timePeriod);
 
     if (eHAL_STATUS_SUCCESS != sme_SetKeepAlive(WLAN_HDD_GET_HAL_CTX(pAdapter),
                                         pAdapter->sessionId, &keepaliveRequest))
@@ -10848,10 +10885,6 @@ static const struct iw_priv_args we_private_args[] = {
         WLAN_GET_LINK_SPEED,
         IW_PRIV_TYPE_CHAR | 18,
         IW_PRIV_TYPE_CHAR | 5, "getLinkSpeed" },
-    {
-        WLAN_PRIV_SET_FTIES,
-        IW_PRIV_TYPE_CHAR | MAX_FTIE_SIZE,
-        0, "set_ft_ies"},
 };
 
 
@@ -11129,7 +11162,7 @@ int hdd_register_wext(struct net_device *dev)
 
 int hdd_UnregisterWext(struct net_device *dev)
 {
-   VOS_TRACE(VOS_MODULE_ID_HDD, VOS_TRACE_LEVEL_INFO,"In %s %pK", __func__, dev);
+   VOS_TRACE(VOS_MODULE_ID_HDD, VOS_TRACE_LEVEL_INFO,"In %s %p", __func__, dev);
    if (dev != NULL)
    {
        rtnl_lock();

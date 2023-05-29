@@ -66,6 +66,9 @@
 #include "wlan_hdd_hostapd.h"
 #include "vos_utils.h"
 #include <wlan_hdd_wext.h>
+//ASUS_BSP+++ "for /data/log/ASUSEvtlog"
+// #include <linux/asusdebug.h>
+//ASUS_BSP--- "for /data/log/ASUSEvtlog"
 
 v_BOOL_t mibIsDot11DesiredBssTypeInfrastructure( hdd_adapter_t *pAdapter );
 
@@ -107,6 +110,11 @@ v_U8_t ccpRSNOui08[ HDD_RSN_OUI_SIZE ] = { 0x00, 0x0F, 0xAC, 0x05 };
 #endif
 
 #define BEACON_FRAME_IES_OFFSET 12
+
+//ASUS_BSP+++ set/clear NetBios packet filter
+tSirMacAddr wlan_selfMacAddr;
+tSirMacAddr wlan_bssId; 
+//ASUS_BSP--- set/clear NetBios packet filter
 
 #ifdef WLAN_FEATURE_11W
 void hdd_indicateUnprotMgmtFrame(hdd_adapter_t *pAdapter,
@@ -535,7 +543,7 @@ static void hdd_SendNewAPChannelInfo(struct net_device *dev, hdd_adapter_t *pAda
     if (descriptor == NULL)
     {
         hddLog(LOGE,
-            "%s: pCsrRoamInfo->pBssDesc=%pK",
+            "%s: pCsrRoamInfo->pBssDesc=%p",
             __func__, descriptor);
         return;
     }
@@ -623,6 +631,9 @@ static void hdd_SendAssociationEvent(struct net_device *dev,tCsrRoamInfo *pCsrRo
     int we_event;
     char *msg;
     int type = -1;
+//ASUS_BSP+++ set/clear NetBios/shareport packet filter
+    eHalStatus halStatus = eHAL_STATUS_SUCCESS;
+//ASUS_BSP--- set/clear NetBios/shareport packet filter
 
 #if defined (WLAN_FEATURE_VOWIFI_11R)
     // Added to find the auth type on the fly at run time
@@ -667,10 +678,24 @@ static void hdd_SendAssociationEvent(struct net_device *dev,tCsrRoamInfo *pCsrRo
              }
         }
 #endif
-        hddLog(VOS_TRACE_LEVEL_ERROR, MAC_ADDRESS_STR " connected to "
-                MAC_ADDRESS_STR,
+        pr_info("wlan: " MAC_ADDRESS_STR " connected to " MAC_ADDRESS_STR "\n",
                 MAC_ADDR_ARRAY(pAdapter->macAddressCurrent.bytes),
                 MAC_ADDR_ARRAY(wrqu.ap_addr.sa_data));
+        //ASUS_BSP+++ "for /data/log/ASUSEvtlog"
+        // ASUSEvtlog("wlan: " MAC_ADDRESS_STR " connected to " MAC_ADDRESS_STR "\n",
+        //         MAC_ADDR_ARRAY(pAdapter->macAddressCurrent.bytes),
+        //         MAC_ADDR_ARRAY(wrqu.ap_addr.sa_data));
+        //ASUS_BSP--- "for /data/log/ASUSEvtlog"
+
+//ASUS_BSP+++ set/clear NetBios packet filter
+        vos_mem_copy( wlan_selfMacAddr, pAdapter->macAddressCurrent.bytes, sizeof(tSirMacAddr));
+        vos_mem_copy( wlan_bssId, wrqu.ap_addr.sa_data, sizeof(tSirMacAddr));
+//ASUS_BSP--- set/clear NetBios packet filter
+//ASUS_BSP+++ set/clear NetBios/shareport packet filter
+        halStatus = sme_NetBiosClearFilter();
+        halStatus = sme_ShareportClearFilter();
+//ASUS_BSP--- set/clear NetBios/shareport packet filter
+
         hdd_SendUpdateBeaconIEsEvent(pAdapter, pCsrRoamInfo);
 
         /* Send IWEVASSOCRESPIE Event if WLAN_FEATURE_CIQ_METRICS is Enabled Or
@@ -695,12 +720,15 @@ static void hdd_SendAssociationEvent(struct net_device *dev,tCsrRoamInfo *pCsrRo
         wlan_hdd_incr_active_session(pHddCtx, pAdapter->device_mode);
         memcpy(wrqu.ap_addr.sa_data, pHddStaCtx->conn_info.bssId, ETH_ALEN);
         type = WLAN_STA_ASSOC_DONE_IND;
-        pr_info("wlan: new IBSS connection to " MAC_ADDRESS_STR"\n",
+        pr_info("[wlan]: new IBSS connection to " MAC_ADDRESS_STR"\n",
                 MAC_ADDR_ARRAY(pHddStaCtx->conn_info.bssId));
     }
     else /* Not Associated */
     {
-        pr_info("wlan: disconnected\n");
+        pr_info("[wlan]: disconnected\n");
+        //ASUS_BSP+++ "for /data/log/ASUSEvtlog"
+        // ASUSEvtlog("[wlan]: disconnected.\n");
+        //ASUS_BSP--- "for /data/log/ASUSEvtlog"
         type = WLAN_STA_DISASSOC_DONE_IND;
         memset(wrqu.ap_addr.sa_data,'\0',ETH_ALEN);
     }
@@ -1360,6 +1388,7 @@ static VOS_STATUS hdd_roamRegisterSTA( hdd_adapter_t *pAdapter,
    staDesc.ucIsEseSta = pRoamInfo->isESEAssoc;
 #endif //FEATURE_WLAN_ESE
 
+#ifdef VOLANS_ENABLE_SW_REPLAY_CHECK
    /* check whether replay check is valid for the station or not */
    if( (eCSR_ENCRYPT_TYPE_TKIP == connectedCipherAlgo) || (eCSR_ENCRYPT_TYPE_AES == connectedCipherAlgo))
    {
@@ -1370,6 +1399,7 @@ static VOS_STATUS hdd_roamRegisterSTA( hdd_adapter_t *pAdapter,
        VOS_TRACE( VOS_MODULE_ID_HDD, VOS_TRACE_LEVEL_INFO,
                  "HDD register TL ucIsReplayCheckValid %d: Replay check is needed for station", staDesc.ucIsReplayCheckValid);
    }
+
    else
    {
       /* For other encryption modes replay check is
@@ -1378,6 +1408,7 @@ static VOS_STATUS hdd_roamRegisterSTA( hdd_adapter_t *pAdapter,
         VOS_TRACE( VOS_MODULE_ID_HDD, VOS_TRACE_LEVEL_INFO,
                  "HDD register TL ucIsReplayCheckValid %d", staDesc.ucIsReplayCheckValid);
    }
+#endif
 
 #ifdef FEATURE_WLAN_WAPI
    hddLog(LOG1, "%s: WAPI STA Registered: %d", __func__, pAdapter->wapi_info.fIsWapiSta);
@@ -2410,7 +2441,7 @@ static void hdd_ReConfigSuspendDataClearedDuringRoaming(hdd_context_t *pHddCtx)
                 vstatus = hdd_conf_arp_offload(pAdapter, TRUE);
                 if (!VOS_IS_STATUS_SUCCESS(vstatus))
                 {
-                    hddLog(VOS_TRACE_LEVEL_INFO,
+                    hddLog(VOS_TRACE_LEVEL_ERROR,
                         FL("Failed to disable ARPOffload Feature %d"), vstatus);
                 }
             }
@@ -2650,7 +2681,7 @@ static eHalStatus roamRoamConnectStatusUpdateHandler( hdd_adapter_t *pAdapter, t
       case eCSR_ROAM_RESULT_IBSS_NEW_PEER:
       {
          hdd_station_ctx_t *pHddStaCtx = WLAN_HDD_GET_STATION_CTX_PTR(pAdapter);
-         struct station_info *staInfo;
+         struct station_info staInfo;
 
          pr_info ( "IBSS New Peer indication from SME "
                     "with peerMac " MAC_ADDRESS_STR " BSSID: " MAC_ADDRESS_STR " and stationID= %d",
@@ -2684,22 +2715,13 @@ static eHalStatus roamRoamConnectStatusUpdateHandler( hdd_adapter_t *pAdapter, t
                vosStatus, vosStatus );
          }
          pHddStaCtx->ibss_sta_generation++;
-
-         staInfo = vos_mem_malloc(sizeof(*staInfo));
-         if (staInfo == NULL) {
-             VOS_TRACE(VOS_MODULE_ID_HDD, VOS_TRACE_LEVEL_ERROR,
-                       "memory allocation for station_info failed");
-             return eHAL_STATUS_FAILED_ALLOC;
-         }
-
-         memset(staInfo, 0, sizeof(*staInfo));
-         staInfo->filled = 0;
-         staInfo->generation = pHddStaCtx->ibss_sta_generation;
+         memset(&staInfo, 0, sizeof(staInfo));
+         staInfo.filled = 0;
+         staInfo.generation = pHddStaCtx->ibss_sta_generation;
 
          cfg80211_new_sta(pAdapter->dev,
                       (const u8 *)pRoamInfo->peerMac,
-                      staInfo, GFP_KERNEL);
-         vos_mem_free(staInfo);
+                      &staInfo, GFP_KERNEL);
 
          if ( eCSR_ENCRYPT_TYPE_WEP40_STATICKEY == pHddStaCtx->ibss_enc_key.encType
             ||eCSR_ENCRYPT_TYPE_WEP104_STATICKEY == pHddStaCtx->ibss_enc_key.encType
@@ -2863,10 +2885,12 @@ VOS_STATUS hdd_roamRegisterTDLSSTA(hdd_adapter_t *pAdapter,
     /* tdls Direct Link do not need bcastSig */
     staDesc.ucBcastSig  = 0 ;
 
+#ifdef VOLANS_ENABLE_SW_REPLAY_CHECK
     if(staDesc.ucProtectedFrame)
         staDesc.ucIsReplayCheckValid = VOS_TRUE;
     else
         staDesc.ucIsReplayCheckValid = VOS_FALSE;
+#endif
 
     staDesc.ucInitState = WLANTL_STA_CONNECTED ;
 
@@ -3139,7 +3163,7 @@ static void iw_full_power_cbfn (void *pContext, eHalStatus status)
     if ((NULL == pAdapter) || (WLAN_HDD_ADAPTER_MAGIC != pAdapter->magic))
     {
         hddLog(VOS_TRACE_LEVEL_ERROR,
-             "%s: Bad param, pAdapter [%pK]",
+             "%s: Bad param, pAdapter [%p]",
                __func__, pAdapter);
         return;
     }
@@ -3306,12 +3330,23 @@ eHalStatus hdd_smeRoamCallback( void *pContext, tCsrRoamInfo *pRoamInfo, tANI_U3
                 if (pHddCtx->hdd_mcastbcast_filter_set == TRUE)
                 {
                     hdd_conf_mcastbcast_filter(pHddCtx, FALSE);
-
+//ASUS_BSP+++ "solution for broadcast/multicast wakeup"
+                    printk("[MBcast_wakeup] hdd_smeRoamCallback: First check - pHddCtx->sus_res_mcastbcast_filter = %d\n", pHddCtx->sus_res_mcastbcast_filter);
+                    printk("[MBcast_wakeup] hdd_smeRoamCallback: First check - pHddCtx->sus_res_mcastbcast_filter_valid = %d\n", pHddCtx->sus_res_mcastbcast_filter_valid);
                     if (VOS_TRUE == pHddCtx->sus_res_mcastbcast_filter_valid) {
                         pHddCtx->configuredMcastBcastFilter =
                             pHddCtx->sus_res_mcastbcast_filter;
                         pHddCtx->sus_res_mcastbcast_filter_valid = VOS_FALSE;
                     }
+
+                    if(pHddCtx->sus_res_mcastbcast_filter != 3)
+                        pHddCtx->sus_res_mcastbcast_filter = 3;
+                    pHddCtx->configuredMcastBcastFilter =
+                        pHddCtx->sus_res_mcastbcast_filter;
+
+                    printk("[MBcast_wakeup] hdd_smeRoamCallback: disassociation happening, restoring configuredMcastBcastFilter = %d\n", pHddCtx->configuredMcastBcastFilter);
+                    printk("[MBcast_wakeup] hdd_smeRoamCallback: already called mcastbcast filter\n");
+//ASUS_BSP--- "solution for broadcast/multicast wakeup"
 
                     hddLog(VOS_TRACE_LEVEL_INFO,
                            "offload: disassociation happening, restoring configuredMcastBcastFilter");
@@ -3326,6 +3361,12 @@ eHalStatus hdd_smeRoamCallback( void *pContext, tCsrRoamInfo *pRoamInfo, tANI_U3
                  * successful connection.
                  */
                 wlan_hdd_set_mc_addr_list(pAdapter, FALSE);
+//ASUS_BSP+++ set/clear NetBios packet filter
+                halStatus = sme_NetBiosClearFilter();
+//ASUS_BSP--- set/clear NetBios packet filter
+//ASUS_BSP+++ set/clear shareport packet filter
+                halStatus = sme_ShareportClearFilter();
+//ASUS_BSP--- set/clear shareport packet filter
 #endif
             }
             break;
@@ -3704,7 +3745,6 @@ static tANI_S32 hdd_ProcessGENIE(hdd_adapter_t *pAdapter,
     tDot11fIERSN dot11RSNIE;
     tDot11fIEWPA dot11WPAIE;
     tANI_U32 i;
-    tANI_U32 status;
     tANI_U8 *pRsnIe;
     tANI_U16 RSNIeLen;
     tPmkidCacheInfo PMKIDCache[4]; // Local transfer memory
@@ -3730,17 +3770,10 @@ static tANI_S32 hdd_ProcessGENIE(hdd_adapter_t *pAdapter,
         pRsnIe = gen_ie + 2;
         RSNIeLen = gen_ie_len - 2;
         // Unpack the RSN IE
-        status = dot11fUnpackIeRSN((tpAniSirGlobal) halHandle,
+        dot11fUnpackIeRSN((tpAniSirGlobal) halHandle,
                             pRsnIe,
                             RSNIeLen,
                             &dot11RSNIE);
-        if (DOT11F_FAILED(status))
-        {
-            hddLog(LOGE,
-                       FL("Parse failure in hdd_ProcessGENIE (0x%08x)"),
-                       status);
-            return -EINVAL;
-        }
         // Copy out the encryption and authentication types
         hddLog(LOG1, FL("%s: pairwise cipher suite count: %d"),
                 __func__, dot11RSNIE.pwise_cipher_suite_count );

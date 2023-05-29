@@ -454,7 +454,7 @@ void wlan_hdd_remain_on_chan_timeout(void *data)
 
     if ((NULL == pAdapter) || (WLAN_HDD_ADAPTER_MAGIC != pAdapter->magic))
     {
-        hddLog( LOGE, FL("pAdapter is invalid %pK !!!"), pAdapter);
+        hddLog( LOGE, FL("pAdapter is invalid %p !!!"), pAdapter);
         return;
     }
     pHddCtx = WLAN_HDD_GET_CTX( pAdapter );
@@ -713,14 +713,11 @@ static int wlan_hdd_request_remain_on_channel( struct wiphy *wiphy,
        return -EBUSY;
     }
 
-    if (TRUE == pHddCtx->btCoexModeSet)
-    {
-        VOS_TRACE( VOS_MODULE_ID_HDD, VOS_TRACE_LEVEL_INFO,
-           FL("BTCoex Mode operation in progress"));
-        return -EBUSY;
-    }
-    if(hdd_isConnectionInProgress((hdd_context_t *)pAdapter->pHddCtx, NULL,
-                                  NULL))
+    /* When P2P-GO and if we are trying to unload the driver then
+     * wlan driver is keep on receiving the remain on channel command
+     * and which is resulting in crash. So not allowing any remain on
+     * channel requets when Load/Unload is in progress*/
+    if(hdd_isConnectionInProgress((hdd_context_t *)pAdapter->pHddCtx))
     {
         hddLog( LOGE,
                "%s: Connection is in progress", __func__);
@@ -778,7 +775,7 @@ static int wlan_hdd_request_remain_on_channel( struct wiphy *wiphy,
 
                 schedule_delayed_work(&pAdapter->roc_work,
                         msecs_to_jiffies(pHddCtx->cfg_ini->gP2PListenDeferInterval));
-                hddLog(VOS_TRACE_LEVEL_INFO, "Defer interval is %hu, pAdapter %pK",
+                hddLog(VOS_TRACE_LEVEL_INFO, "Defer interval is %hu, pAdapter %p",
                         pHddCtx->cfg_ini->gP2PListenDeferInterval, pAdapter);
                 return 0;
             }
@@ -2273,7 +2270,7 @@ void hdd_sendMgmtFrameOverMonitorIface( hdd_adapter_t *pMonAdapter,
      {
          VOS_TRACE(VOS_MODULE_ID_HDD, VOS_TRACE_LEVEL_FATAL,
                    "HDD [%d]: Insufficient headroom, "
-                   "head[%pK], data[%pK], req[%d]",
+                   "head[%p], data[%p], req[%d]",
                    __LINE__, skb->head, skb->data, nFrameLength);
          kfree_skb(skb);
          return ;
