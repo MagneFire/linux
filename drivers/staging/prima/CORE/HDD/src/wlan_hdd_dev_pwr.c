@@ -111,6 +111,8 @@ static int wlan_suspend(hdd_context_t* pHddCtx)
 
    pVosSchedContext vosSchedContext = NULL;
 
+   printk("[wlan]: wlan_suspend +.");
+
    /* Get the global VOSS context */
    vosSchedContext = get_vos_sched_ctxt();
 
@@ -121,8 +123,7 @@ static int wlan_suspend(hdd_context_t* pHddCtx)
    if(!vos_is_apps_power_collapse_allowed(pHddCtx))
    {
        /* Fail this suspend */
-       VOS_TRACE(VOS_MODULE_ID_HDD, VOS_TRACE_LEVEL_ERROR, "%s: Fail wlan"
-                 "suspend: not in IMPS/BMPS", __func__);
+       VOS_TRACE(VOS_MODULE_ID_HDD, VOS_TRACE_LEVEL_ERROR, "%s: Fail wlan suspend: not in IMPS/BMPS", __func__);
        return -EPERM;
    }
 
@@ -167,6 +168,8 @@ tx_suspend:
    /* Set the Tx Thread as Suspended */
    pHddCtx->isTxThreadSuspended = TRUE;
 
+   printk("[wlan]: Tx Thread suspended");
+
    INIT_COMPLETION(pHddCtx->rx_sus_event_var);
 
    /* Indicate Rx Thread to Suspend */
@@ -207,6 +210,8 @@ tx_suspend:
 rx_suspend:
    /* Set the Rx Thread as Suspended */
    pHddCtx->isRxThreadSuspended = TRUE;
+
+   printk("[wlan]: Rx Thread suspended");
 
    INIT_COMPLETION(pHddCtx->mc_sus_event_var);
 
@@ -257,9 +262,12 @@ mc_suspend:
    /* Set the Mc Thread as Suspended */
    pHddCtx->isMcThreadSuspended = TRUE;
    
+   printk("[wlan]: Mc Thread suspended");
+   
    /* Set the Station state as Suspended */
    pHddCtx->isWlanSuspended = TRUE;
 
+   printk("[wlan]: wlan_suspend -.");
    return 0;
 }
 
@@ -277,6 +285,8 @@ mc_suspend:
 static void wlan_resume(hdd_context_t* pHddCtx)
 {
    pVosSchedContext vosSchedContext = NULL;
+
+   printk("[wlan]: wlan_resume +.");
 
    //Get the global VOSS context.
    vosSchedContext = get_vos_sched_ctxt();
@@ -311,6 +321,8 @@ static void wlan_resume(hdd_context_t* pHddCtx)
 
    /* Set the Station state as Suspended */
    pHddCtx->isWlanSuspended = FALSE;
+
+   printk("[wlan]: wlan_resume -.");
 }
 
 /*----------------------------------------------------------------------------
@@ -500,7 +512,7 @@ void hddDevTmTxBlockTimeoutHandler(void *usrData)
    if ((NULL == staAdapater) || (WLAN_HDD_ADAPTER_MAGIC != staAdapater->magic))
    {
       VOS_TRACE(VOS_MODULE_ID_HDD,VOS_TRACE_LEVEL_ERROR,
-                FL("invalid Adapter %pK"), staAdapater);
+                FL("invalid Adapter %p"), staAdapater);
       VOS_ASSERT(0);
       return;
    }

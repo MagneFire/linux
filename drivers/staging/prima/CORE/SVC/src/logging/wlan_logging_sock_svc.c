@@ -1,5 +1,5 @@
 /*
-* Copyright (c) 2014-2015, 2017 The Linux Foundation. All rights reserved.
+* Copyright (c) 2014-2015 The Linux Foundation. All rights reserved.
 *
 * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
 *
@@ -228,7 +228,7 @@ static int wlan_send_sock_msg_to_app(tAniHdr *wmsg, int radio,
 		return -EINVAL;
 	}
 
-	payload_len = wmsg_length + sizeof(wnl->radio) + sizeof(tAniHdr);
+	payload_len = wmsg_length + sizeof(wnl->radio);
 	tot_msg_len = NLMSG_SPACE(payload_len);
 	skb = dev_alloc_skb(tot_msg_len);
 	if (skb == NULL) {
@@ -493,10 +493,10 @@ static int send_fw_log_pkt_to_user(void)
 		vos_pkt_return_packet(current_pkt);
 
 		extra_header_len = sizeof(msg_header.radio) + sizeof(tAniHdr);
-		nl_payload_len = extra_header_len + skb->len;
+		nl_payload_len = NLMSG_ALIGN(extra_header_len + skb->len);
 
 		msg_header.nlh.nlmsg_type = ANI_NL_MSG_LOG;
-		msg_header.nlh.nlmsg_len = nlmsg_msg_size(nl_payload_len);
+		msg_header.nlh.nlmsg_len = nl_payload_len;
 		msg_header.nlh.nlmsg_flags = NLM_F_REQUEST;
 		msg_header.nlh.nlmsg_pid = gapp_pid;
 		msg_header.nlh.nlmsg_seq = nlmsg_seq++;
@@ -507,8 +507,8 @@ static int send_fw_log_pkt_to_user(void)
 		msg_header.wmsg.length = skb->len;
 
 		if (unlikely(skb_headroom(skb) < sizeof(msg_header))) {
-			pr_err("VPKT [%d]: Insufficient headroom, head[%pK],"
-				" data[%pK], req[%zu]", __LINE__, skb->head,
+			pr_err("VPKT [%d]: Insufficient headroom, head[%p],"
+				" data[%p], req[%zu]", __LINE__, skb->head,
 				skb->data, sizeof(msg_header));
 			return -EIO;
 		}
@@ -587,10 +587,10 @@ static int send_data_mgmt_log_pkt_to_user(void)
 
 		extra_header_len = sizeof(msg_header.radio) + sizeof(tAniHdr) +
 						sizeof(msg_header.frameSize);
-		nl_payload_len = extra_header_len + skb->len;
+		nl_payload_len = NLMSG_ALIGN(extra_header_len + skb->len);
 
 		msg_header.nlh.nlmsg_type = ANI_NL_MSG_LOG;
-		msg_header.nlh.nlmsg_len = nlmsg_msg_size(nl_payload_len);
+		msg_header.nlh.nlmsg_len = nl_payload_len;
 		msg_header.nlh.nlmsg_flags = NLM_F_REQUEST;
 		msg_header.nlh.nlmsg_pid = 0;
 		msg_header.nlh.nlmsg_seq = nlmsg_seq++;
@@ -603,8 +603,8 @@ static int send_data_mgmt_log_pkt_to_user(void)
 		msg_header.frameSize = WLAN_MGMT_LOGGING_FRAMESIZE_128BYTES;
 
 		if (unlikely(skb_headroom(skb) < sizeof(msg_header))) {
-			pr_err("VPKT [%d]: Insufficient headroom, head[%pK],"
-				" data[%pK], req[%zu]", __LINE__, skb->head,
+			pr_err("VPKT [%d]: Insufficient headroom, head[%p],"
+				" data[%p], req[%zu]", __LINE__, skb->head,
 				skb->data, sizeof(msg_header));
 			return -EIO;
 		}
@@ -1211,7 +1211,9 @@ int wlan_queue_logpkt_for_app(vos_pkt_t *pPacket, uint32 pkt_type)
 
 void wlan_process_done_indication(uint8 type, uint32 reason_code)
 {
-    if ((type == WLAN_QXDM_LOGGING) && (wlan_is_log_report_in_progress() == TRUE))
+    // ASUS_patch_add
+    //if ((type == WLAN_QXDM_LOGGING) && (wlan_is_log_report_in_progress() == TRUE))
+    if ((type == WLAN_QXDM_LOGGING) && vos_is_wlan_logging_enabled() && (wlan_is_log_report_in_progress() == TRUE))
     {
         pr_info("%s: Setting LOGGER_FATAL_EVENT\n", __func__);
         set_bit(LOGGER_FATAL_EVENT_POST, &gwlan_logging.event_flag);

@@ -574,6 +574,7 @@ limProcessMlmAuthCnf(tpAniSirGlobal pMac, tANI_U32 *pMsgBuf)
              * When Open authentication fails with reason code "13" and
              * authType set to 'auto switch', Try with Shared Authentication
              */
+            pr_info("wlan: Open authentication fails Switch to Shared Auth\n");
             authMode = eSIR_SHARED_KEY;
             // Trigger MAC based Authentication
             pMlmAuthReq = vos_mem_malloc(sizeof(tLimMlmAuthReq));
@@ -618,6 +619,7 @@ limProcessMlmAuthCnf(tpAniSirGlobal pMac, tANI_U32 *pMsgBuf)
             // MAC based authentication failure
             if (psessionEntry->limSmeState == eLIM_SME_WT_AUTH_STATE)
             {
+                pr_info("wlan: Auth Failure occurred\n");
                 PELOGE(limLog(pMac, LOGE, FL("Auth Failure occurred."));)
                 psessionEntry->limSmeState = eLIM_SME_JOIN_FAILURE_STATE;
                 MTRACE(macTrace(pMac, TRACE_CODE_SME_STATE, psessionEntry->peSessionId, psessionEntry->limSmeState));
@@ -849,6 +851,7 @@ limProcessMlmAssocCnf(tpAniSirGlobal pMac, tANI_U32 *pMsgBuf)
     if (((tLimMlmAssocCnf *) pMsgBuf)->resultCode != eSIR_SME_SUCCESS)
     {
         // Association failure
+	printk("wlan: *** Association failure *** Error code: %d", ((tLimMlmAssocCnf *) pMsgBuf)->resultCode);
         limLog(pMac, LOG1,
                FL("SessionId: %d Association failure resultCode: %d"
                    "limSmeState: %d"), psessionEntry->peSessionId,
@@ -950,7 +953,7 @@ limProcessMlmReassocCnf(tpAniSirGlobal pMac, tANI_U32 *pMsgBuf)
      */
     if (pMac->ft.ftPEContext.pFTPreAuthReq)
     {
-        limLog(pMac, LOG1, "%s: Freeing pFTPreAuthReq= %pK", __func__,
+        limLog(pMac, LOG1, "%s: Freeing pFTPreAuthReq= %p", __func__,
                pMac->ft.ftPEContext.pFTPreAuthReq);
         if (pMac->ft.ftPEContext.pFTPreAuthReq->pbssDescription)
         {

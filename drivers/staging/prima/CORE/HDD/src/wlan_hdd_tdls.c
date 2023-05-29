@@ -995,10 +995,9 @@ int wlan_hdd_sta_tdls_init(hdd_adapter_t *pAdapter)
 
     if (test_bit(TDLS_INIT_DONE, &pAdapter->event_flags))
     {
-        hddLog(LOG1,
-                FL("TDLS INIT DONE set to 1, no point in re-init"));
-        /* Return success as TDLS is already initialized */
-        return 0;
+        VOS_TRACE( VOS_MODULE_ID_HDD, VOS_TRACE_LEVEL_ERROR,
+                "%s: TDLS INIT DONE set to 1, no point in re-init", __func__);
+        return -EALREADY;
     }
 
     if ((FALSE == pHddCtx->cfg_ini->fEnableTDLSSupport) ||
@@ -2158,7 +2157,7 @@ tANI_U16 wlan_hdd_tdlsConnectedPeers(hdd_adapter_t *pAdapter)
     if ((NULL == pAdapter) || (WLAN_HDD_ADAPTER_MAGIC != pAdapter->magic))
     {
         VOS_TRACE(VOS_MODULE_ID_HDD, VOS_TRACE_LEVEL_ERROR,
-                  FL("invalid pAdapter: %pK"), pAdapter);
+                  FL("invalid pAdapter: %p"), pAdapter);
         return 0;
     }
     pHddCtx = WLAN_HDD_GET_CTX(pAdapter);
@@ -2288,7 +2287,7 @@ void wlan_hdd_tdls_connection_callback(hdd_adapter_t *pAdapter)
     if (0 != wlan_hdd_sta_tdls_init(pAdapter))
     {
         mutex_unlock(&pHddCtx->tdls_lock);
-        hddLog(LOGE, FL("wlan_hdd_sta_tdls_init failed"));
+        hddLog(VOS_TRACE_LEVEL_ERROR,"%s: wlan_hdd_sta_tdls_init failed",__func__);
         return;
     }
 
@@ -2416,7 +2415,7 @@ void wlan_hdd_tdls_check_bmps(hdd_adapter_t *pAdapter)
     if ((NULL == pAdapter) || (WLAN_HDD_ADAPTER_MAGIC != pAdapter->magic))
     {
         VOS_TRACE(VOS_MODULE_ID_HDD, VOS_TRACE_LEVEL_ERROR,
-                  FL("invalid pAdapter: %pK"), pAdapter);
+                  FL("invalid pAdapter: %p"), pAdapter);
         return;
     }
 
@@ -2767,7 +2766,7 @@ void wlan_hdd_tdls_check_power_save_prohibited(hdd_adapter_t *pAdapter)
     if ((NULL == pAdapter) || (WLAN_HDD_ADAPTER_MAGIC != pAdapter->magic))
     {
         VOS_TRACE(VOS_MODULE_ID_HDD, VOS_TRACE_LEVEL_ERROR,
-                  FL("invalid pAdapter: %pK"), pAdapter);
+                  FL("invalid pAdapter: %p"), pAdapter);
         return;
     }
 

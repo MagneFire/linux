@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2015, 2017 The Linux Foundation. All rights reserved.
+ * Copyright (c) 2012-2015 The Linux Foundation. All rights reserved.
  *
  * Previously licensed under the ISC license by Qualcomm Atheros, Inc.
  *
@@ -498,6 +498,14 @@ static eHalStatus hdd_IndicateScanResult(hdd_scan_info_t *scanInfo, tCsrScanResu
       event.u.qual.level = VOS_MIN ((descriptor->rssi + descriptor->sinr), 0);
    }
    
+   //ASUS_BSP+++ "add for the RSSI (value = 0) issue"
+   //hddLog(1, "[wlan]: event.u.qual.level=%d.\n", (event.u.qual.level));
+   if( event.u.qual.level == 0 ) {
+       hddLog(1, "[wlan]: event.u.qual.level, (0 -> -99).\n");
+       event.u.qual.level = (-99);
+   }
+   //ASUS_BSP--- "add for the RSSI (value = 0) issue"
+
    event.u.qual.updated = IW_QUAL_ALL_UPDATED;
 
    current_event = iwe_stream_add_event(scanInfo->info,current_event,
@@ -614,7 +622,7 @@ static eHalStatus hdd_ScanRequestCallback(tHalHandle halHandle, void *pContext,
     
     ENTER();
 
-    hddLog(LOGW,"%s called with halHandle = %pK, pContext = %pK, scanID = %d,"
+    hddLog(LOGW,"%s called with halHandle = %p, pContext = %p, scanID = %d,"
            " returned status = %d", __func__, halHandle, pContext,
            (int) scanId, (int) status);
 
@@ -624,7 +632,7 @@ static eHalStatus hdd_ScanRequestCallback(tHalHandle halHandle, void *pContext,
        do some quick sanity before proceeding */
     if (pAdapter->dev != dev)
     {
-       hddLog(LOGW, "%s: device mismatch %pK vs %pK",
+       hddLog(LOGW, "%s: device mismatch %p vs %p",
                __func__, pAdapter->dev, dev);
         return eHAL_STATUS_SUCCESS;
     }
@@ -985,7 +993,7 @@ static eHalStatus hdd_CscanRequestCallback(tHalHandle halHandle, void *pContext,
     VOS_STATUS vos_status = VOS_STATUS_SUCCESS;
     ENTER();
 
-    hddLog(LOG1,"%s called with halHandle = %pK, pContext = %pK, scanID = %d,"
+    hddLog(LOG1,"%s called with halHandle = %p, pContext = %p, scanID = %d,"
            " returned status = %d", __func__, halHandle, pContext,
             (int) scanId, (int) status);
 

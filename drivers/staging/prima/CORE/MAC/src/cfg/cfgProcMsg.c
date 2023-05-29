@@ -1692,12 +1692,6 @@ tAniSirCgStatic cfgStatic[CFG_PARAM_MAX_NUM] =
      WNI_CFG_DISABLE_BAR_WAKE_UP_HOST_MIN,
      WNI_CFG_DISABLE_BAR_WAKE_UP_HOST_MAX,
      WNI_CFG_DISABLE_BAR_WAKE_UP_HOST_DEF},
-    {WNI_CFG_DISABLE_SCAN_DURING_SCO,
-     CFG_CTL_VALID | CFG_CTL_RE | CFG_CTL_WE | CFG_CTL_INT | CFG_CTL_NTF_HAL,
-     WNI_CFG_DISABLE_SCAN_DURING_SCO_MIN,
-     WNI_CFG_DISABLE_SCAN_DURING_SCO_MAX,
-     WNI_CFG_DISABLE_SCAN_DURING_SCO_DEF},
-
 };
 
 tAniSirCfgStaticString cfgStaticString[CFG_MAX_STATIC_STRING] =
@@ -2458,8 +2452,7 @@ ProcSetReqInternal(tpAniSirGlobal pMac, tANI_U16 length, tANI_U32 *pParam, tANI_
                 // Process string parameter
                 else
                 {
-                    if ((valueLenRoundedUp4 > length) ||
-                        (valueLen > CFG_MAX_STR_LEN))
+                    if (valueLenRoundedUp4 > length)
                     {
                         PELOGE(cfgLog(pMac, LOGE, FL("Invalid string length %d"
                                "in set param %d (tot %d)"), valueLen,

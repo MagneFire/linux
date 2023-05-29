@@ -1373,12 +1373,12 @@ typedef enum
 #define CFG_ENABLE_HOST_ARPOFFLOAD_NAME         "hostArpOffload"
 #define CFG_ENABLE_HOST_ARPOFFLOAD_MIN          ( 0 )
 #define CFG_ENABLE_HOST_ARPOFFLOAD_MAX          ( 1 )
-#define CFG_ENABLE_HOST_ARPOFFLOAD_DEFAULT      ( 1 )
+#define CFG_ENABLE_HOST_ARPOFFLOAD_DEFAULT      ( 0 )
 
 #define CFG_ENABLE_HOST_NSOFFLOAD_NAME         "hostNSOffload"
 #define CFG_ENABLE_HOST_NSOFFLOAD_MIN          ( 0 )
 #define CFG_ENABLE_HOST_NSOFFLOAD_MAX          ( 1 )
-#define CFG_ENABLE_HOST_NSOFFLOAD_DEFAULT      ( 1 )
+#define CFG_ENABLE_HOST_NSOFFLOAD_DEFAULT      ( 0 )
 
 
 #define CFG_ENABLE_BTAMP_NAME                   "gEnableBtAmp"
@@ -2565,38 +2565,6 @@ This feature requires the dependent cfg.ini "gRoamPrefer5GHz" set to 1 */
 #define CFG_SAR_BOFFSET_SET_CORRECTION_MAX       (1)
 #define CFG_SAR_BOFFSET_SET_CORRECTION_DEFAULT   (0)
 
-/*
- * gDisableScanDuringSco is used to disable/enable scan during SCO call
- * This can be useful to avoid glitches because of EXIT_IMPS invoked by scan
- * when SCO call in progress
- * 0: Enable scan
- * 1: Disable scan
- */
-#define CFG_DISABLE_SCAN_DURING_SCO         "gDisableScanDuringSco"
-#define CFG_DISABLE_SCAN_DURING_SCO_MIN     (0)
-#define CFG_DISABLE_SCAN_DURING_SCO_MAX     (1)
-#define CFG_DISABLE_SCAN_DURING_SCO_DEFAULT (0)
-
-
-/*
- * maximum interval (in seconds) for a
- * single scan plan supported by the device.
- */
-#define CFG_MAX_SCHED_SCAN_PLAN_INT_NAME       "g_max_sched_scan_plan_int"
-#define CFG_MAX_SCHED_SCAN_PLAN_INT_MIN        (1)
-#define CFG_MAX_SCHED_SCAN_PLAN_INT_MAX        (7200)
-#define CFG_MAX_SCHED_SCAN_PLAN_INT_DEFAULT    (3600)
-
-/*
- * maximum number of iterations for a single
- * scan plan supported by the device.
- */
-#define CFG_MAX_SCHED_SCAN_PLAN_ITRNS_NAME       "g_max_sched_scan_plan_itrns"
-#define CFG_MAX_SCHED_SCAN_PLAN_ITRNS_MIN        (1)
-#define CFG_MAX_SCHED_SCAN_PLAN_ITRNS_MAX        (100)
-#define CFG_MAX_SCHED_SCAN_PLAN_ITRNS_DEFAULT    (10)
-
-
 /*--------------------------------------------------------------------------- 
   Type declarations
   -------------------------------------------------------------------------*/ 
@@ -3114,14 +3082,13 @@ typedef struct
    v_U16_t                      rps_mask;
    v_U8_t                      boffset_correction_enable;
    v_BOOL_t                    disableBarWakeUp;
-   v_BOOL_t                    disable_scan_during_sco;
-   uint32_t                    max_sched_scan_plan_interval;
-   uint32_t                    max_sched_scan_plan_iterations;
 } hdd_config_t;
 
 /*--------------------------------------------------------------------------- 
   Function declarations and documenation
   -------------------------------------------------------------------------*/ 
+VOS_STATUS hdd_parse_config_nv(hdd_context_t* pHddCtx);
+
 VOS_STATUS hdd_parse_config_ini(hdd_context_t *pHddCtx);
 VOS_STATUS hdd_set_sme_config( hdd_context_t *pHddCtx );
 v_BOOL_t hdd_update_config_dat ( hdd_context_t *pHddCtx );

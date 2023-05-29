@@ -1373,7 +1373,6 @@ VOS_STATUS peHandleMgmtFrame( v_PVOID_t pvosGCtx, v_PVOID_t vosBuff)
     vos_pkt_t      *pVosPkt;
     VOS_STATUS      vosStatus;
     v_U8_t         *pRxPacketInfo;
-    tANI_U16        frameLen;
 
     pVosPkt = (vos_pkt_t *)vosBuff;
     if (NULL == pVosPkt)
@@ -1397,12 +1396,6 @@ VOS_STATUS peHandleMgmtFrame( v_PVOID_t pvosGCtx, v_PVOID_t vosBuff)
         return VOS_STATUS_E_FAILURE;
     }
 
-    frameLen = WDA_GET_RX_PAYLOAD_LEN(pRxPacketInfo);
-    if (frameLen > WDA_MAX_MGMT_MPDU_LEN) {
-        PELOG1(limLog(pMac, LOG1, FL("Dropping frame of len %d"), frameLen));
-        vos_pkt_return_packet(pVosPkt);
-        return VOS_STATUS_E_FAILURE;
-    }
 
     //
     //  The MPDU header is now present at a certain "offset" in
@@ -1412,7 +1405,7 @@ VOS_STATUS peHandleMgmtFrame( v_PVOID_t pvosGCtx, v_PVOID_t vosBuff)
     if(mHdr->fc.type == SIR_MAC_MGMT_FRAME) 
     {
     PELOG1(limLog( pMac, LOG1,
-       FL ( "RxBd=%pK mHdr=%pK Type: %d Subtype: %d  Sizes:FC%d Mgmt%d"),
+       FL ( "RxBd=%p mHdr=%p Type: %d Subtype: %d  Sizes:FC%d Mgmt%d"),
        pRxPacketInfo, mHdr, mHdr->fc.type, mHdr->fc.subType, sizeof(tSirMacFrameCtl), sizeof(tSirMacMgmtHdr) );)
 
 #ifdef WLAN_FEATURE_ROAM_SCAN_OFFLOAD
@@ -2578,6 +2571,7 @@ tMgmtFrmDropReason limIsPktCandidateForDrop(tpAniSirGlobal pMac, tANI_U8 *pRxPac
         if(pMac->pmm.inMissedBeaconScenario)
         {
             MTRACE(macTrace(pMac, TRACE_CODE_INFO_LOG, 0, eLOG_NODROP_MISSED_BEACON_SCENARIO));
+            pr_info("wlan: Do not drop beacon and probe response - Missed beacon sceanrio\n");
             return eMGMT_DROP_NO_DROP;
         }
         if (limIsSystemInScanState(pMac))
