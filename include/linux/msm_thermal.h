@@ -15,6 +15,8 @@
 #define __MSM_THERMAL_H
 
 #include <linux/thermal.h>
+#include <linux/notifier.h>
+#include <linux/fb.h>
 
 #define MAX_THRESHOLD  2
 #define TSENS_NAME_MAX 20
@@ -47,6 +49,8 @@ struct msm_thermal_data {
 	int32_t core_temp_hysteresis_degC;
 	int32_t hotplug_temp_degC;
 	int32_t hotplug_temp_hysteresis_degC;
+	int32_t core_hotplug_temp_degC;
+	int32_t core_hotplug_temp_hysteresis_degC;
 	uint32_t core_control_mask;
 	uint32_t freq_mitig_temp_degc;
 	uint32_t freq_mitig_temp_hysteresis_degc;
@@ -75,6 +79,9 @@ struct msm_thermal_data {
 	int32_t vdd_mx_temp_degC;
 	int32_t vdd_mx_temp_hyst_degC;
 	int32_t therm_reset_temp_degC;
+	struct notifier_block fb_notif;
+	struct workqueue_struct *thermal_att_wq;
+	struct delayed_work work_att;
 };
 
 enum sensor_id_type {

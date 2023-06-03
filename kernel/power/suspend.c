@@ -30,6 +30,7 @@
 #include <trace/events/power.h>
 #include <linux/compiler.h>
 #include <linux/wakeup_reason.h>
+// #include <linux/asusdebug.h>
 
 #include "power.h"
 
@@ -264,6 +265,14 @@ void __weak arch_suspend_enable_irqs(void)
 	local_irq_enable();
 }
 
+extern int msm_thermal_uevent(char*);
+
+static void notify_userspace_resume(void)
+{
+	printk(KERN_INFO "%s\n", __func__);
+	msm_thermal_uevent("ASUS_KERNEL_RESUME=ON");
+}
+
 /**
  * suspend_enter - Make the system enter the given sleep state.
  * @state: System sleep state to enter.
@@ -368,6 +377,7 @@ static int suspend_enter(suspend_state_t state, bool *wakeup)
 
  Platform_finish:
 	platform_resume_finish(state);
+	notify_userspace_resume();
 	return error;
 }
 
@@ -501,6 +511,7 @@ static void pm_suspend_marker(char *annotation)
 	pr_info("PM: suspend %s %d-%02d-%02d %02d:%02d:%02d.%09lu UTC\n",
 		annotation, tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
 		tm.tm_hour, tm.tm_min, tm.tm_sec, ts.tv_nsec);
+	// ASUSEvtlog("[MODE] pm_suspend : %s\n", annotation);
 }
 
 /**

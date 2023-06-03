@@ -49,6 +49,9 @@
 #include <linux/suspend.h>
 #include <linux/uaccess.h>
 #include <linux/uio_driver.h>
+// #include <linux/asusdebug.h>
+#include <linux/timer.h>
+#include <linux/delay.h>
 
 #define CREATE_TRACE_POINTS
 #define TRACE_MSM_THERMAL
@@ -125,12 +128,16 @@ static cpumask_var_t cpus_previously_online;
 static DEFINE_MUTEX(core_control_mutex);
 static struct kobject *cc_kobj;
 static struct kobject *mx_kobj;
+static struct kobject *msm_thermal_module_kobj;
 static struct task_struct *hotplug_task;
 static struct task_struct *freq_mitigation_task;
 static struct task_struct *thermal_monitor_task;
 static struct completion hotplug_notify_complete;
 static struct completion freq_mitigation_complete;
 static struct completion thermal_monitor_complete;
+static struct timer_list thermal_core_control_timer;
+static struct delayed_work thermal_fb_work;
+struct work_struct do_thermal_core_control_work;
 
 static int enabled;
 static int polling_enabled;
@@ -193,6 +200,9 @@ static u32 tsens_temp_print;
 static uint32_t bucket;
 static cpumask_t throttling_mask;
 static int tsens_scaling_factor = SENSOR_SCALING_FACTOR;
+static bool do_thermal_core_control_flag = false;
+static bool ambient_flag = false;
+static bool online_offline_flag;
 
 static LIST_HEAD(devices_list);
 static LIST_HEAD(thresholds_list);
@@ -203,6 +213,8 @@ enum thermal_threshold {
 	HOTPLUG_THRESHOLD_LOW,
 	FREQ_THRESHOLD_HIGH,
 	FREQ_THRESHOLD_LOW,
+	CORE_HOTPLUG_THRESHOLD_HIGH,
+	CORE_HOTPLUG_THRESHOLD_LOW,
 	THRESHOLD_MAX_NR,
 };
 
@@ -368,6 +380,7 @@ enum ocr_request {
 	OPTIMUM_CURRENT_NR,
 };
 
+static int fb_notifier_callback(struct notifier_block *self, unsigned long event, void *data);
 static int thermal_config_debugfs_read(struct seq_file *m, void *data);
 static ssize_t thermal_config_debugfs_write(struct file *file,
 					const char __user *buffer,
@@ -2712,9 +2725,12 @@ static void msm_thermal_bite(int zone_id, long temp)
 	} else {
 		pr_err("Tsens:%d reached temperature:%ld. System reset\n",
 			tsens_id, temp);
+		// ASUSEvtlog("[TSENS]tsens-%d reached temperature:%ld. System reset !!!\n",
+		// 	tsens_id, temp);
 	}
 	if (!is_scm_armv8()) {
-		scm_call_atomic1(SCM_SVC_BOOT, THERM_SECURE_BITE_CMD, 0);
+		//scm_call_atomic1(SCM_SVC_BOOT, THERM_SECURE_BITE_CMD, 0);
+		kernel_power_off();
 	} else {
 		desc.args[0] = 0;
 		desc.arginfo = SCM_ARGS(1);
@@ -2971,6 +2987,10 @@ static __ref int do_hotplug(void *data)
 				ret =
 				sensor_mgr_set_threshold(cpus[cpu].sensor_id,
 				&cpus[cpu].threshold[HOTPLUG_THRESHOLD_HIGH]);
+
+				ret =
+				sensor_mgr_set_threshold(cpus[cpu].sensor_id,
+				&cpus[cpu].threshold[CORE_HOTPLUG_THRESHOLD_HIGH]);
 
 				if (cpus[cpu].offline
 					&& !IS_LOW_THRESHOLD_SET(ret))
@@ -3475,6 +3495,112 @@ static int __ref msm_thermal_cpu_callback(struct notifier_block *nfb,
 	return NOTIFY_OK;
 }
 
+int msm_thermal_uevent(char *event_string)
+{
+	int ret = 0;
+	char *envp[2]={event_string, NULL};
+
+	if (!msm_thermal_module_kobj) {
+		pr_err("cannot find kobject\n");
+		ret = -ENOENT;
+		goto msm_thermal_uevent_exit;
+	}
+
+	ret = kobject_uevent_env(msm_thermal_module_kobj, KOBJ_CHANGE, envp);
+	if (ret)
+		pr_err("kobject_uevent_env error = %d\n", ret);
+
+msm_thermal_uevent_exit:
+	return ret;
+}
+EXPORT_SYMBOL(msm_thermal_uevent);
+
+static int fb_notifier_callback(struct notifier_block *self,
+		unsigned long event, void *data)
+{
+	struct fb_event *evdata = data;
+	int *blank;
+	char *event_string = "";
+	struct msm_thermal_data *pdata = container_of(self, struct msm_thermal_data, fb_notif);
+
+	if (evdata && evdata->data && event == FB_EVENT_BLANK && pdata) {
+		blank = evdata->data;
+		switch (*blank) {
+		case FB_BLANK_UNBLANK:
+			event_string = "ASUS_PANEL_MODE=ON";
+			ambient_flag = false;
+			break;
+		case FB_BLANK_POWERDOWN:
+			event_string = "ASUS_PANEL_MODE=OFF";
+			ambient_flag = true;
+			break;
+		case FB_BLANK_HSYNC_SUSPEND:
+			ambient_flag = true;
+			break;
+		case FB_BLANK_VSYNC_SUSPEND:
+			event_string = "ASUS_PANEL_MODE=AMBIENT";
+			ambient_flag = true;
+			break;
+		case FB_BLANK_NORMAL:
+			ambient_flag = true;
+			break;
+		}
+		msm_thermal_uevent(event_string);
+	}
+	return 0;
+}
+
+static void thermal_fb_register(struct work_struct *work)
+{
+	int ret = 0;
+	struct msm_thermal_data *data = container_of(work, struct msm_thermal_data,
+			work_att.work);
+
+	pr_info(" %s in", __func__);
+	data->fb_notif.notifier_call = fb_notifier_callback;
+	ret = fb_register_client(&data->fb_notif);
+	if (ret)
+		pr_err(" Unable to register fb_notifier: %d\n", ret);
+}
+
+static void do_thermal_core_control(struct work_struct *work)
+{
+	int i = 0;
+	int ret = 0;
+	struct device *cpu_dev = NULL;
+	mutex_lock(&core_control_mutex);
+	for (i = num_possible_cpus(); i > 0; i--)
+	{
+		lock_device_hotplug();
+		if (online_offline_flag && !cpu_online(i) && i == 1) {
+			cpu_dev = get_cpu_device(i);
+			trace_thermal_pre_core_online(i);
+			ret = device_online(cpu_dev);
+			if (ret)
+				pr_err("Error %d online core %d\n", ret, i);
+
+			trace_thermal_post_core_online(i,
+				cpumask_test_cpu(i, cpu_online_mask));
+		} else if (online_offline_flag == false && cpu_online(i)){
+			cpu_dev = get_cpu_device(i);
+			trace_thermal_pre_core_offline(i);
+			ret = device_offline(cpu_dev);
+			if (ret)
+				pr_err("Error %d offline core %d\n", ret, i);
+
+			trace_thermal_post_core_offline(i,
+				cpumask_test_cpu(i, cpu_online_mask));
+		}
+		unlock_device_hotplug();
+	}
+	mutex_unlock(&core_control_mutex);
+}
+
+static void enable_thermal_core_control(unsigned long data)
+{
+	do_thermal_core_control_flag = true;
+}
+
 static struct notifier_block __refdata msm_thermal_cpu_notifier = {
 	.notifier_call = msm_thermal_cpu_callback,
 };
@@ -3487,6 +3613,7 @@ static int hotplug_notify(enum thermal_trip_type type, int temp, void *data)
 
 	if (!(msm_thermal_info.core_control_mask & BIT(cpu_node->cpu)))
 		return 0;
+
 	switch (type) {
 	case THERMAL_TRIP_CONFIGURABLE_HI:
 		if (!(cpu_node->offline))
@@ -3499,6 +3626,7 @@ static int hotplug_notify(enum thermal_trip_type type, int temp, void *data)
 	default:
 		break;
 	}
+
 	if (hotplug_task) {
 		cpu_node->hotplug_thresh_clear = true;
 		complete(&hotplug_notify_complete);
@@ -3506,6 +3634,43 @@ static int hotplug_notify(enum thermal_trip_type type, int temp, void *data)
 		pr_err("Hotplug task is not initialized\n");
 	return 0;
 }
+
+static int core_hotplug_notify(enum thermal_trip_type type, int temp, void *data)
+{
+	struct cpu_info *cpu_node = (struct cpu_info *)data;
+
+	pr_info_ratelimited("%s reach temp threshold: %d\n",
+				cpu_node->sensor_type, temp);
+
+	if (!(msm_thermal_info.core_control_mask & BIT(cpu_node->cpu)))
+		return 0;
+
+	switch (type) {
+	case THERMAL_TRIP_CONFIGURABLE_HI:
+		if (!(cpu_node->offline) && do_thermal_core_control_flag) {
+			cpu_node->offline = 1;
+			online_offline_flag = false;
+			schedule_work(&do_thermal_core_control_work);
+		}
+		break;
+	case THERMAL_TRIP_CONFIGURABLE_LOW:
+		if (cpu_node->offline && !ambient_flag && do_thermal_core_control_flag) {
+			cpu_node->offline = 0;
+			online_offline_flag = true;
+			schedule_work(&do_thermal_core_control_work);
+		}
+		break;
+	default:
+		break;
+	}
+	if (hotplug_task) {
+		cpu_node->hotplug_thresh_clear = true;
+		complete(&hotplug_notify_complete);
+	} else
+		pr_err("Hotplug task is not initialized\n");
+	return 0;
+}
+
 /* Adjust cpus offlined bit based on temperature reading. */
 static int hotplug_init_cpu_offlined(void)
 {
@@ -3548,6 +3713,7 @@ static void hotplug_init(void)
 {
 	uint32_t cpu = 0;
 	struct sensor_threshold *hi_thresh = NULL, *low_thresh = NULL;
+	struct sensor_threshold *core_hi_thresh = NULL, *core_low_thresh = NULL;
 
 	if (hotplug_task)
 		return;
@@ -3574,7 +3740,20 @@ static void hotplug_init(void)
 		hi_thresh->notify = low_thresh->notify = hotplug_notify;
 		hi_thresh->data = low_thresh->data = (void *)&cpus[cpu];
 
+		core_hi_thresh = &cpus[cpu].threshold[CORE_HOTPLUG_THRESHOLD_HIGH];
+		core_low_thresh = &cpus[cpu].threshold[CORE_HOTPLUG_THRESHOLD_LOW];
+		core_hi_thresh->temp = (msm_thermal_info.core_hotplug_temp_degC)
+					* tsens_scaling_factor;
+		core_hi_thresh->trip = THERMAL_TRIP_CONFIGURABLE_HI;
+		core_low_thresh->temp = (msm_thermal_info.core_hotplug_temp_degC -
+					msm_thermal_info.core_hotplug_temp_hysteresis_degC)
+					* tsens_scaling_factor;
+		core_low_thresh->trip = THERMAL_TRIP_CONFIGURABLE_LOW;
+		core_hi_thresh->notify = core_low_thresh->notify = core_hotplug_notify;
+		core_hi_thresh->data = core_low_thresh->data = (void *)&cpus[cpu];
+
 		sensor_mgr_set_threshold(cpus[cpu].sensor_id, hi_thresh);
+		sensor_mgr_set_threshold(cpus[cpu].sensor_id, core_hi_thresh);
 	}
 init_kthread:
 	init_completion(&hotplug_notify_complete);
@@ -4547,6 +4726,21 @@ void sensor_mgr_remove_threshold(struct threshold_info *thresh_inp)
 	mutex_unlock(&threshold_mutex);
 }
 
+static int msm_thermal_module_kobj_init(void)
+{
+	int ret = 0;
+
+	msm_thermal_module_kobj = kset_find_obj(module_kset, KBUILD_MODNAME);
+	if (!msm_thermal_module_kobj) {
+		pr_err("cannot find kobject\n");
+		ret = -ENOENT;
+		goto msm_thermal_module_kobj_init_exit;
+	}
+
+msm_thermal_module_kobj_init_exit:
+	return ret;
+}
+
 static int msm_thermal_add_gfx_nodes(void)
 {
 	struct kobject *module_kobj = NULL;
@@ -4656,6 +4850,7 @@ static void __ref disable_msm_thermal(void)
 
 	/* make sure check_temp is no longer running */
 	cancel_delayed_work_sync(&check_temp_work);
+	cancel_delayed_work_sync(&thermal_fb_work);
 
 	get_online_cpus();
 	for_each_possible_cpu(cpu) {
@@ -4689,6 +4884,7 @@ static void interrupt_mode_init(void)
 		msm_thermal_add_cx_nodes();
 		msm_thermal_add_gfx_nodes();
 	}
+	msm_thermal_module_kobj_init();
 }
 
 static int __ref set_enabled(const char *val, const struct kernel_param *kp)
@@ -4761,6 +4957,9 @@ static ssize_t __ref store_cc_enabled(struct kobject *kobj,
 					continue;
 				sensor_mgr_set_threshold(cpus[cpu].sensor_id,
 				&cpus[cpu].threshold[HOTPLUG_THRESHOLD_HIGH]);
+
+				sensor_mgr_set_threshold(cpus[cpu].sensor_id,
+				&cpus[cpu].threshold[CORE_HOTPLUG_THRESHOLD_HIGH]);
 			}
 		}
 		mutex_unlock(&core_control_mutex);
@@ -5142,6 +5341,10 @@ int msm_thermal_init(struct msm_thermal_data *pdata)
 	INIT_DELAYED_WORK(&retry_hotplug_work, retry_hotplug);
 	INIT_DELAYED_WORK(&check_temp_work, check_temp);
 	schedule_delayed_work(&check_temp_work, 0);
+	INIT_DELAYED_WORK(&thermal_fb_work, thermal_fb_register);
+	schedule_delayed_work(&thermal_fb_work, 0);
+
+	INIT_WORK(&do_thermal_core_control_work, do_thermal_core_control);
 
 	if (num_possible_cpus() > 1) {
 		cpus_previously_online_update();
@@ -5641,6 +5844,11 @@ static void thermal_cpu_hotplug_mit_disable(void)
 
 		for (th_cnt = HOTPLUG_THRESHOLD_HIGH;
 			th_cnt <= HOTPLUG_THRESHOLD_LOW; th_cnt++)
+			sensor_cancel_trip(cpus[cpu].sensor_id,
+				&cpus[cpu].threshold[th_cnt]);
+
+		for (th_cnt = CORE_HOTPLUG_THRESHOLD_HIGH;
+			th_cnt <= CORE_HOTPLUG_THRESHOLD_LOW; th_cnt++)
 			sensor_cancel_trip(cpus[cpu].sensor_id,
 				&cpus[cpu].threshold[th_cnt]);
 	}
@@ -6395,6 +6603,18 @@ static int probe_cc(struct device_node *node, struct msm_thermal_data *data,
 	if (ret)
 		goto hotplug_node_fail;
 
+	key = "qcom,core-hotplug-temp";
+	ret = of_property_read_u32(node, key, &data->core_hotplug_temp_degC);
+	if (ret)
+		goto hotplug_node_fail;
+
+	key = "qcom,core-hotplug-temp-hysteresis";
+	ret = of_property_read_u32(node, key,
+			&data->core_hotplug_temp_hysteresis_degC);
+
+	if (ret)
+		goto hotplug_node_fail;
+
 read_node_fail:
 	if (ret) {
 		dev_info(&pdev->dev,
@@ -6890,13 +7110,19 @@ static void thermal_update_mit_threshold(
 		config[idx].disable_config();
 		enable_config(idx);
 		if (idx >= MSM_LIST_MAX_NR) {
-			if (idx == MSM_LIST_MAX_NR + HOTPLUG_CONFIG)
+			if (idx == MSM_LIST_MAX_NR + HOTPLUG_CONFIG) {
 				UPDATE_CPU_CONFIG_THRESHOLD(
 					msm_thermal_info.core_control_mask,
 					HOTPLUG_THRESHOLD_HIGH,
 					config[idx].thresh,
 					config[idx].thresh_clr);
-			else if (idx == MSM_LIST_MAX_NR + CPUFREQ_CONFIG)
+
+				UPDATE_CPU_CONFIG_THRESHOLD(
+					msm_thermal_info.core_control_mask,
+					CORE_HOTPLUG_THRESHOLD_HIGH,
+					config[idx].thresh,
+					config[idx].thresh_clr);
+			} else if (idx == MSM_LIST_MAX_NR + CPUFREQ_CONFIG)
 				UPDATE_CPU_CONFIG_THRESHOLD(
 					msm_thermal_info
 					.freq_mitig_control_mask,
@@ -7093,6 +7319,13 @@ static int msm_thermal_dev_probe(struct platform_device *pdev)
 		interrupt_mode_enable = false;
 	}
 
+	init_timer(&thermal_core_control_timer);
+
+	thermal_core_control_timer.expires = jiffies + 300 * HZ;
+	thermal_core_control_timer.function = enable_thermal_core_control;
+
+	add_timer(&thermal_core_control_timer);
+
 	return ret;
 fail:
 	if (ret)
@@ -7167,6 +7400,8 @@ static int msm_thermal_dev_exit(struct platform_device *inp_dev)
 		kfree(thresh);
 		thresh = NULL;
 	}
+	if (msm_thermal_module_kobj)
+		kfree(msm_thermal_module_kobj);
 	kfree(table);
 	if (core_ptr) {
 		for (; _cluster < core_ptr->entity_count; _cluster++) {
