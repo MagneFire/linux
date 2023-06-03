@@ -22,6 +22,7 @@
 #include <linux/workqueue.h>
 #include <linux/wakelock.h>
 #include <linux/asus_utility.h>
+// #include <linux/asusdebug.h>
 #include <linux/input/himax_852xES.h>
 
 #define MODE_PROC_MAX_BUFF_SIZE  256
@@ -44,6 +45,7 @@ uint32_t mode_notifier_base;
 static struct proc_dir_entry *mode_root;
 
 static int interactive_status = 0;
+static int node1_status = 0;
 static RAW_NOTIFIER_HEAD(mode_chain_head);
 
 static struct workqueue_struct *notify_workQueue;
@@ -209,13 +211,18 @@ static int mode_write_proc_node1(struct file *filp, const char __user *buff, siz
 
 	if (msg[0] == '0') {
 		node1_status = 0;
-		himax_timetelling_detection(0);
 	} else if (msg[0] == '1') {
 		node1_status = 1;
-		himax_timetelling_detection(1);
 	} else {
 		return len;
 	}
+
+	printk("[HXTP] node1_status=%d, DisableTouch_flag=%d\n", node1_status, DisableTouch_flag);
+	if (DisableTouch_flag!=node1_status) {
+		DisableTouch_flag = node1_status;
+		himax_timetelling_detection(node1_status);
+	}
+
 	return len;
 }
 
