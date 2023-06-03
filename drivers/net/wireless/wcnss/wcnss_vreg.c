@@ -632,7 +632,7 @@ int wcnss_wlan_power(struct device *dev,
 			printk("[wcnss]: wcnss_core_vregs_on fail.\n");
 
 			//ASUS_BSP+++ "for /data/log/ASUSEvtlog"
-			//ASUSEvtlog("[wcnss]: wcnss_core_vregs_on fail.\n");
+			// ASUSEvtlog("[wcnss]: wcnss_core_vregs_on fail.\n");
 			//ASUS_BSP--- "for /data/log/ASUSEvtlog"
 
 			goto fail_wcnss_on;
@@ -641,7 +641,7 @@ int wcnss_wlan_power(struct device *dev,
 			printk("[wcnss]: wcnss_core_vregs_on.\n");
 
 			//ASUS_BSP+++ "for /data/log/ASUSEvtlog"
-			//ASUSEvtlog("[wcnss]: wcnss_core_vregs_on.\n");
+			// ASUSEvtlog("[wcnss]: wcnss_core_vregs_on.\n");
 			//ASUS_BSP--- "for /data/log/ASUSEvtlog"
 		}
 
@@ -652,7 +652,7 @@ int wcnss_wlan_power(struct device *dev,
 			printk("[wcnss]: wcnss_iris_vregs_on fail.\n");
 
 			//ASUS_BSP+++ "for /data/log/ASUSEvtlog"
-			//ASUSEvtlog("[wcnss]: wcnss_iris_vregs_on fail.\n");
+			// ASUSEvtlog("[wcnss]: wcnss_iris_vregs_on fail.\n");
 			//ASUS_BSP--- "for /data/log/ASUSEvtlog"
 
 			goto fail_iris_on;
@@ -661,7 +661,7 @@ int wcnss_wlan_power(struct device *dev,
 			printk("[wcnss]: wcnss_iris_vregs_on.\n");
 
 			//ASUS_BSP+++ "for /data/log/ASUSEvtlog"
-			//ASUSEvtlog("[wcnss]: wcnss_iris_vregs_on.\n");
+			// ASUSEvtlog("[wcnss]: wcnss_iris_vregs_on.\n");
 			//ASUS_BSP--- "for /data/log/ASUSEvtlog"
 		}
 
@@ -672,7 +672,7 @@ int wcnss_wlan_power(struct device *dev,
 			printk("[wcnss]: configure_iris_xo (WCNSS_WLAN_SWITCH_ON) fail.\n");
 
 			//ASUS_BSP+++ "for /data/log/ASUSEvtlog"
-			//ASUSEvtlog("[wcnss]: configure_iris_xo WCNSS_WLAN_SWITCH_ON fail.\n");
+			// ASUSEvtlog("[wcnss]: configure_iris_xo WCNSS_WLAN_SWITCH_ON fail.\n");
 			//ASUS_BSP--- "for /data/log/ASUSEvtlog"
 
 			goto fail_iris_xo;
@@ -681,7 +681,7 @@ int wcnss_wlan_power(struct device *dev,
 			printk("[wcnss]: configure_iris_xo (WCNSS_WLAN_SWITCH_ON).\n");
 
 			//ASUS_BSP+++ "for /data/log/ASUSEvtlog"
-			//ASUSEvtlog("[wcnss]: configure_iris_xo WCNSS_WLAN_SWITCH_ON.\n");
+			// ASUSEvtlog("[wcnss]: configure_iris_xo WCNSS_WLAN_SWITCH_ON.\n");
 			//ASUS_BSP--- "for /data/log/ASUSEvtlog"
 		}
 
@@ -693,17 +693,17 @@ int wcnss_wlan_power(struct device *dev,
 				WCNSS_WLAN_SWITCH_OFF, NULL);
 		printk("[wcnss]: configure_iris_xo (WCNSS_WLAN_SWITCH_OFF).\n");
 		//ASUS_BSP+++ "for /data/log/ASUSEvtlog"
-		//ASUSEvtlog("[wcnss]: configure_iris_xo WCNSS_WLAN_SWITCH_OFF.\n");
+		// ASUSEvtlog("[wcnss]: configure_iris_xo WCNSS_WLAN_SWITCH_OFF.\n");
 		//ASUS_BSP--- "for /data/log/ASUSEvtlog"
 		wcnss_iris_vregs_off(hw_type, cfg);
 		printk("[wcnss]: wcnss_iris_vregs_off.\n");
 		//ASUS_BSP+++ "for /data/log/ASUSEvtlog"
-		//ASUSEvtlog("[wcnss]: wcnss_iris_vregs_off.\n");
+		// ASUSEvtlog("[wcnss]: wcnss_iris_vregs_off.\n");
 		//ASUS_BSP--- "for /data/log/ASUSEvtlog"
 		wcnss_core_vregs_off(hw_type, cfg);
-		printk("[wcnss]: wcnss_core_vregs_off.\n");
+		// printk("[wcnss]: wcnss_core_vregs_off.\n");
 		//ASUS_BSP+++ "for /data/log/ASUSEvtlog"
-		//ASUSEvtlog("[wcnss]: wcnss_core_vregs_off.\n");
+		// ASUSEvtlog("[wcnss]: wcnss_core_vregs_off.\n");
 		//ASUS_BSP--- "for /data/log/ASUSEvtlog"
 	}
 
